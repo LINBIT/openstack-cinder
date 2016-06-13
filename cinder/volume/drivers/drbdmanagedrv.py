@@ -27,6 +27,7 @@ import eventlet
 import json
 import six
 import socket
+import sys
 import time
 import uuid
 
@@ -275,12 +276,20 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
         # by default okay - or the ignored error code.
         return ret
 
+    # Python 3 has no "long" type anymore, and "int" is too small for
+    # volumes > 2.6TiB. "six" has no compat code.
+    def _my_long(self, x):
+        if sys.version_info > (3,):
+            return int(x)
+        else:
+            return long(x)
+
     # DRBDmanage works in kiB units; Cinder uses GiB.
     def _vol_size_to_dm(self, size):
-        return int(size * units.Gi / units.Ki)
+        return self._my_long(size * units.Gi / units.Ki)
 
     def _vol_size_to_cinder(self, size):
-        return int(size * units.Ki / units.Gi)
+        return self._my_long(size * units.Ki / units.Gi)
 
     def is_clean_volume_name(self, name, prefix):
         try:
