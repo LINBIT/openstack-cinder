@@ -562,6 +562,9 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
                                          d_res_name, False)
             self._check_result(res, ignore=[dm_exc.DM_ENOENT])
 
+    # This function has to work with a fake object created by
+    # create_cloned_volume() as well, so don't use the "." operator
+    # on the "snapshot" argument.
     def create_volume_from_snapshot(self, volume, snapshot):
         """Creates a volume from a snapshot."""
 
@@ -574,9 +577,21 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
         new_res = self.is_clean_volume_name(volume['id'], DM_VN_PREFIX)
 
         r_props = self.empty_dict
+
         # TODO(PM): consistency groups => different volume number possible
         new_vol_nr = 0
-        v_props = [(new_vol_nr, self._priv_hash_from_volume(volume))]
+        v0_props = self._priv_hash_from_volume(volume)
+
+        if volume.size > snapshot['volume_size']:
+            LOG.debug("resize volume '%(dst_vol)s' from %(src_size)d to "
+                      "%(dst_size)d",
+                      {'dst_vol': volume.id,
+                       'src_size': snapshot['volume_size'],
+                       'dst_size': volume.size})
+            v0_props[dm_const.VOL_SIZE] = str(
+                self._vol_size_to_dm(volume.size))
+
+        v_props = [(new_vol_nr, v0_props)]
 
         res = self.call_or_reconnect(self.odm.restore_snapshot,
                                      new_res,
@@ -600,22 +615,14 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
                        {'res': new_res, 'vol': volume['id']})
             raise exception.VolumeBackendAPIException(data=message)
 
-        if (('size' in volume) and (volume['size'] > snapshot['volume_size'])):
-            LOG.debug("resize volume '%(dst_vol)s' from %(src_size)d to "
-                      "%(dst_size)d",
-                      {'dst_vol': volume['id'],
-                       'src_size': snapshot['volume_size'],
-                       'dst_size': volume['size']})
-            self.extend_volume(volume, volume['size'])
-
     def create_cloned_volume(self, volume, src_vref):
         temp_id = self._clean_uuid()
-        snapshot = {'id': temp_id}
+        snapshot = {'id': temp_id,
+                    'volume_size': src_vref['size']}
 
         self.create_snapshot({'id': temp_id,
                               'volume_id': src_vref['id']})
 
-        snapshot['volume_size'] = src_vref['size']
         self.create_volume_from_snapshot(volume, snapshot)
 
         self.delete_snapshot(snapshot)

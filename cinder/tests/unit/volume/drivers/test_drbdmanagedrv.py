@@ -474,17 +474,6 @@ class DrbdManageIscsiTestCase(test.TestCase):
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("run_external_plugin", dmd.odm.next_call())
 
-        # resize image checks
-        self.assertEqual("list_volumes", dmd.odm.next_call())
-        self.assertEqual(newvol['id'], dmd.odm.call_parm(3)["aux:cinder-id"])
-        self.assertEqual("resize_volume", dmd.odm.next_call())
-        self.assertEqual("res", dmd.odm.call_parm(1))
-        self.assertEqual(2, dmd.odm.call_parm(2))
-        self.assertEqual(-1, dmd.odm.call_parm(3))
-        self.assertEqual(5242880, dmd.odm.call_parm(4))
-
-        self.assertEqual("run_external_plugin", dmd.odm.next_call())
-
         self.assertEqual("list_snapshots", dmd.odm.next_call())
         self.assertEqual("remove_snapshot", dmd.odm.next_call())
 
