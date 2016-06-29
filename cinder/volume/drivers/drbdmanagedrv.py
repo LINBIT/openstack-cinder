@@ -439,6 +439,12 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
         except Exception as e:
             raise exception.VolumeBackendAPIException(data=e.message)
 
+    def _set_resource_managed(self, d_res_name):
+        res = self.call_or_reconnect(self.odm.modify_resource,
+                                     d_res_name, 0,
+                                     {dm_const.MANAGED: dm_const.BOOL_TRUE})
+        self._check_result(res)
+
     def _push_drbd_options(self, d_res_name):
         res_opt = {'resource': d_res_name,
                    'target': 'resource',
@@ -470,10 +476,11 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
 
         # TODO(PM): consistency groups
         d_res_name = self.is_clean_volume_name(volume['id'], DM_VN_PREFIX)
+        r_props = {dm_const.MANAGED: dm_const.BOOL_FALSE}
 
         res = self.call_or_reconnect(self.odm.create_resource,
                                      d_res_name,
-                                     self.empty_dict)
+                                     r_props)
         self._check_result(res, ignore=[dm_exc.DM_EEXIST], ret=None)
 
         self._push_drbd_options(d_res_name)
@@ -501,6 +508,18 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
                                      0, False)
         self._check_result(res)
 
+        if self.drbdmanage_devs_on_controller:
+            # TODO(pm): CG
+            res = self.call_or_reconnect(self.odm.assign,
+                                         socket.gethostname(),
+                                         d_res_name,
+                                         [(dm_const.FLAG_DISKLESS,
+                                           dm_const.BOOL_TRUE)])
+            self._check_result(res, ignore=[dm_exc.DM_EEXIST])
+
+        # Now do deploy
+        self._set_resource_managed(d_res_name)
+
         okay = self._call_policy_plugin(self.plugin_resource,
                                         self.policy_resource,
                                         dict(resource=d_res_name,
@@ -510,15 +529,6 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
                          'resource "%(res)s", volume "%(vol)s"') %
                        {'res': d_res_name, 'vol': volume['id']})
             raise exception.VolumeBackendAPIException(data=message)
-
-        if self.drbdmanage_devs_on_controller:
-            # TODO(pm): CG
-            res = self.call_or_reconnect(self.odm.assign,
-                                         socket.gethostname(),
-                                         d_res_name,
-                                         [(dm_const.FLAG_DISKLESS,
-                                           dm_const.BOOL_TRUE)])
-            self._check_result(res, ignore=[dm_exc.DM_EEXIST])
 
         return {}
 
@@ -576,7 +586,7 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
 
         new_res = self.is_clean_volume_name(volume['id'], DM_VN_PREFIX)
 
-        r_props = self.empty_dict
+        r_props = {dm_const.MANAGED: dm_const.BOOL_FALSE}
 
         # TODO(PM): consistency groups => different volume number possible
         new_vol_nr = 0
@@ -601,7 +611,10 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
                                      v_props)
         self._check_result(res, ignore=[dm_exc.DM_ENOENT])
 
-        self._push_drbd_options(d_res_name)
+        self._push_drbd_options(new_res)
+
+        # Now deploy it
+        self._set_resource_managed(new_res)
 
         # TODO(PM): CG
         okay = self._call_policy_plugin(self.plugin_resource,
@@ -609,7 +622,7 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
                                         dict(resource=new_res,
                                              volnr=str(new_vol_nr)))
         if not okay:
-            message = (_('DRBDmanage timeout waiting for new volume '
+            message = (_('DRBD Manage timeout waiting for new volume '
                          'after snapshot restore; '
                          'resource "%(res)s", volume "%(vol)s"') %
                        {'res': new_res, 'vol': volume['id']})

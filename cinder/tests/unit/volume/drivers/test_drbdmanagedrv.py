@@ -275,12 +275,13 @@ class DrbdManageIscsiTestCase(test.TestCase):
         dmd.drbdmanage_devs_on_controller = False
         dmd.odm = DrbdManageFakeDriver()
         dmd.create_volume(testvol)
-        self.assertEqual(8, dmd.odm.call_count())
+        self.assertEqual(9, dmd.odm.call_count())
         self.assertEqual("create_resource", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("list_volumes", dmd.odm.next_call())
+
         self.assertEqual("create_volume", dmd.odm.next_call())
         self.assertEqual(1048576, dmd.odm.call_parm(2))
         self.assertEqual("auto_deploy", dmd.odm.next_call())
@@ -300,7 +301,7 @@ class DrbdManageIscsiTestCase(test.TestCase):
         dmd.odm = DrbdManageFakeDriver()
         dmd.create_volume(testvol)
 
-        self.assertEqual(8, dmd.odm.call_count())
+        self.assertEqual(9, dmd.odm.call_count())
 
         self.assertEqual("create_resource", dmd.odm.next_call())
 
@@ -322,6 +323,7 @@ class DrbdManageIscsiTestCase(test.TestCase):
         self.assertEqual(1048576, dmd.odm.call_parm(2))
 
         self.assertEqual("auto_deploy", dmd.odm.next_call())
+        self.assertEqual("modify_resource", dmd.odm.next_call())
 
     @skip_unless_drbdmanage_installed
     def test_create_volume_controller_all_vols(self):
@@ -344,9 +346,10 @@ class DrbdManageIscsiTestCase(test.TestCase):
         self.assertEqual("create_volume", dmd.odm.next_call())
         self.assertEqual(1048576, dmd.odm.call_parm(2))
         self.assertEqual("auto_deploy", dmd.odm.next_call())
-        self.assertEqual("run_external_plugin", dmd.odm.next_call())
         self.assertEqual("assign", dmd.odm.next_call())
-        self.assertEqual(9, dmd.odm.call_count())
+        self.assertEqual("modify_resource", dmd.odm.next_call())
+        self.assertEqual(10, dmd.odm.call_count())
+        self.assertEqual("run_external_plugin", dmd.odm.next_call())
 
     @skip_unless_drbdmanage_installed
     def test_delete_volume(self):
@@ -444,6 +447,7 @@ class DrbdManageIscsiTestCase(test.TestCase):
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
+        self.assertEqual("modify_resource", dmd.odm.next_call())
         self.assertEqual("run_external_plugin", dmd.odm.next_call())
         self.assertEqual("list_snapshots", dmd.odm.next_call())
         self.assertEqual("remove_snapshot", dmd.odm.next_call())
@@ -472,6 +476,7 @@ class DrbdManageIscsiTestCase(test.TestCase):
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
+        self.assertEqual("modify_resource", dmd.odm.next_call())
         self.assertEqual("run_external_plugin", dmd.odm.next_call())
 
         self.assertEqual("list_snapshots", dmd.odm.next_call())
@@ -496,6 +501,7 @@ class DrbdManageIscsiTestCase(test.TestCase):
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
+        self.assertEqual("modify_resource", dmd.odm.next_call())
         self.assertEqual("run_external_plugin", dmd.odm.next_call())
 
     @skip_unless_drbdmanage_installed
@@ -515,9 +521,12 @@ class DrbdManageIscsiTestCase(test.TestCase):
         dmd.create_volume_from_snapshot(newvol, snap)
         self.assertEqual("list_snapshots", dmd.odm.next_call())
         self.assertEqual("restore_snapshot", dmd.odm.next_call())
+        self.assertEqual(str(newvol['size'] * 1024 * 1024),
+                         dmd.odm.call_parm(5)[0][1]["vol_size"])
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
         self.assertEqual("set_drbdsetup_props", dmd.odm.next_call())
+        self.assertEqual("modify_resource", dmd.odm.next_call())
         self.assertEqual("run_external_plugin", dmd.odm.next_call())
 
 
