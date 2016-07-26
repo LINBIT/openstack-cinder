@@ -609,7 +609,12 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
                                      sname,
                                      r_props,
                                      v_props)
-        self._check_result(res, ignore=[dm_exc.DM_ENOENT])
+        res2 = self._check_result(res, ignore=[dm_exc.DM_ENOENT,
+                                               dm_exc.DM_EEXIST])
+        if res2 == dm_exc.DM_ENOENT:
+            message = (_('DRBDmanage snapshot %(sn) in %(res) not found') %
+                       {'res': d_res_name, 'sn': sname})
+            raise exception.VolumeBackendAPIException(data=message)
 
         self._push_drbd_options(new_res)
 
