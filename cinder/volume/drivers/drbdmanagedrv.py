@@ -494,8 +494,13 @@ class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
         if not drbd_vol:
             props = self._priv_hash_from_volume(volume)
             # TODO(PM): properties - redundancy, etc
-            res = self.call_or_reconnect(self.odm.create_volume,
-                                         d_res_name,
+
+            # This *must* not be call_or_reconnect().  In case we get a dbus
+            # timeout we'd immediately try again,  and so the resource would
+            # have *two* volumes with the same cinder-ID.
+            # If that call fails, have the entire chain fail, so that Cinder
+            # restarts it and we run the check for an existing volume again.
+            res = self.odm.create_volume(d_res_name,
                                          self._vol_size_to_dm(volume['size']),
                                          props)
             self._check_result(res)
