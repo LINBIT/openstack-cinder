@@ -1,4 +1,4 @@
-# Copyright (c) 2014 LINBIT HA Solutions GmbH
+# Copyright (c) 2014-2016 LINBIT HA Solutions GmbH
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -23,7 +23,7 @@ for more details.
 """
 
 
-import eventlet
+from eventlet import greenthread
 import json
 import six
 import socket
@@ -37,22 +37,46 @@ from oslo_utils import importutils
 from oslo_utils import units
 
 
+import cinder
 from cinder import exception
-from cinder.i18n import _, _LW, _LI, _LE
+from cinder.i18n import _
 from cinder import interface
 from cinder.volume import driver
 
 try:
     import dbus
+    from drbdmanage import clienthelper
+    from drbdmanage.clienthelper import DrbdManageClientHelper \
+        as dm_client_helper
     import drbdmanage.consts as dm_const
     import drbdmanage.exceptions as dm_exc
     import drbdmanage.utils as dm_utils
+
 except ImportError:
     # Used for the tests, when no DRBDmanage is installed
     dbus = None
     dm_const = None
     dm_exc = None
     dm_utils = None
+
+    clienthelper = None
+
+    # Fake DrbdManageClientHelper, in case DRBD Manage isn't installed
+    # (eg. pylint, pep8, ...)
+    class dm_client_helper(object):
+        odm = None
+
+        def _fetch_answer_data(self, res, key, level=None, req=True):
+            pass
+
+        def _check_result(self, res, ignore=None, ret=0):
+            pass
+
+        def _call_policy_plugin(self, plugin, pol_base, pol_this):
+            pass
+
+        def call_or_reconnect(self, fn, *args):
+            pass
 
 
 LOG = logging.getLogger(__name__)
@@ -124,12 +148,13 @@ CS_DISKLESS = None
 CS_UPD_CON = None
 
 
-class DrbdManageBaseDriver(driver.VolumeDriver):
+class DrbdManageBaseDriver(driver.VolumeDriver, dm_client_helper):
     """Cinder driver that uses DRBDmanage for storage."""
 
-    VERSION = '1.1.0'
-    drbdmanage_dbus_name = 'org.drbd.drbdmanaged'
-    drbdmanage_dbus_interface = '/interface'
+    VERSION = '1.1.1'
+
+    # From/for DrbdManageClientHelper
+    logger = LOG
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = "Cinder_Jenkins"
@@ -141,10 +166,6 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
         super(DrbdManageBaseDriver, self).__init__(*args, **kwargs)
 
         self.configuration.append_config_values(drbd_opts)
-        if not self.drbdmanage_dbus_name:
-            self.drbdmanage_dbus_name = 'org.drbd.drbdmanaged'
-        if not self.drbdmanage_dbus_interface:
-            self.drbdmanage_dbus_interface = '/interface'
         self.drbdmanage_redundancy = int(getattr(self.configuration,
                                                  'drbdmanage_redundancy', 1))
         self.drbdmanage_devs_on_controller = bool(
@@ -185,46 +206,20 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
         CS_DISKLESS = dm_const.CSTATE_PREFIX + dm_const.FLAG_DISKLESS
         CS_UPD_CON = dm_const.CSTATE_PREFIX + dm_const.FLAG_UPD_CON
 
-    def dbus_connect(self):
-        self.odm = dbus.SystemBus().get_object(self.drbdmanage_dbus_name,
-                                               self.drbdmanage_dbus_interface)
-        self.odm.ping()
+        if clienthelper:
+            # Does not exist if running via pylint/pep8 etc.,
+            # because there's no DRBD Manage installed
+            clienthelper.delay_for = greenthread.sleep
+            clienthelper.l10n = cinder.i18n._
+            clienthelper.lError = cinder.i18n._LE
+            clienthelper.lWarn = cinder.i18n._LW
+            clienthelper.lInfo = cinder.i18n._LI
 
-    def call_or_reconnect(self, fn, *args):
-        """Call DBUS function; on a disconnect try once to reconnect."""
+    def fetch_answer_data(self, res, key, level=None, req=True):
         try:
-            return fn(*args)
-        except dbus.DBusException as e:
-            LOG.warning(_LW("Got disconnected; trying to reconnect. (%s)"), e)
-            self.dbus_connect()
-            # Old function object is invalid, get new one.
-            return getattr(self.odm, fn._method_name)(*args)
-
-    def _fetch_answer_data(self, res, key, level=None, req=True):
-        for code, fmt, data in res:
-            if code == dm_exc.DM_INFO:
-                if level and level != fmt:
-                    continue
-
-                value = [v for k, v in data if k == key]
-                if value:
-                    if len(value) == 1:
-                        return value[0]
-                    else:
-                        return value
-
-        if req:
-            if level:
-                l = level + ":" + key
-            else:
-                l = key
-
-            msg = _('DRBDmanage driver error: expected key "%s" '
-                    'not in answer, wrong DRBDmanage version?') % l
-            LOG.error(msg)
-            raise exception.VolumeDriverException(message=msg)
-
-        return None
+            return self._fetch_answer_data(res, key, level=level, req=req)
+        except Exception as e:
+            raise exception.VolumeDriverException(message=e.message)
 
     def do_setup(self, context):
         """Any initialization the volume driver does while starting."""
@@ -251,30 +246,12 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
         id = id.replace("}", "")
         return id
 
-    def _check_result(self, res, ignore=None, ret=0):
-        seen_success = False
-        seen_error = False
-        result = ret
-        for (code, fmt, arg_l) in res:
-            # convert from DBUS to Python
-            arg = dict(arg_l)
-            if ignore and code in ignore:
-                if not result:
-                    result = code
-                continue
-            if code == dm_exc.DM_SUCCESS:
-                seen_success = True
-                continue
-            if code == dm_exc.DM_INFO:
-                continue
-            seen_error = _("Received error string: %s") % (fmt % arg)
-
-        if seen_error:
-            raise exception.VolumeBackendAPIException(data=seen_error)
-        if seen_success:
-            return ret
-        # by default okay - or the ignored error code.
-        return ret
+    def check_result(self, res, ignore=None, ret=0):
+        try:
+            return super(DrbdManageBaseDriver,
+                         self)._check_result(res, ignore, ret)
+        except Exception as e:
+            raise exception.VolumeBackendAPIException(data=e.message)
 
     # Python 3 has no "long" type anymore, and "int" is too small for
     # volumes > 2.6TiB. "six" has no compat code.
@@ -304,30 +281,6 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
                 return prefix + name
         except ValueError:
             return None
-
-    def _call_policy_plugin(self, plugin, pol_base, pol_this):
-        """Returns True for done, False for timeout."""
-
-        pol_inp_data = dict(pol_base)
-        pol_inp_data.update(pol_this,
-                            starttime=str(time.time()))
-
-        retry = 0
-        while True:
-            res, pol_result = self.call_or_reconnect(
-                self.odm.run_external_plugin,
-                plugin,
-                pol_inp_data)
-            self._check_result(res)
-
-            if pol_result['result'] == dm_const.BOOL_TRUE:
-                return True
-
-            if pol_result['timeout'] == dm_const.BOOL_TRUE:
-                return False
-
-            eventlet.sleep(min(0.5 + retry / 5, 2))
-            retry += 1
 
     def _wait_for_node_assignment(self, res_name, vol_nr, nodenames,
                                   filter_props=None, timeout=90,
@@ -363,12 +316,16 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
 
             retry += 1
             # Not yet
-            LOG.warning(_LW('Try #%(try)d: Volume "%(res)s"/%(vol)d '
-                            'not yet deployed on "%(host)s", waiting.'),
+            LOG.warning(self._LW('Try #%(try)d: Volume "%(res)s"/%(vol)d '
+                                 'not yet deployed on "%(host)s", waiting.'),
                         {'try': retry, 'host': nodenames,
                          'res': res_name, 'vol': vol_nr})
 
-            eventlet.sleep(min(0.5 + retry / 5, 2))
+            seconds = min(0.5 + retry / 5, 2)
+            if clienthelper:
+                clienthelper.delay_for(seconds)
+            else:
+                greenthread.sleep(seconds)
 
         # Timeout
         return False
@@ -475,17 +432,12 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
     def local_path(self, volume):
         d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(volume)
 
-        res, data = self.call_or_reconnect(self.odm.text_query,
-                                           [dm_const.TQ_GET_PATH,
-                                            d_res_name,
-                                            str(d_vol_nr)])
-        self._check_result(res)
-
-        if len(data) == 1:
-            return data[0]
-
-        message = _('Got bad path information from DRBDmanage! (%s)') % data
-        raise exception.VolumeBackendAPIException(data=message)
+        try:
+            # We must not call the VolumeDriver's local_path,
+            # but the DrbdManageClientHelper's.
+            return dm_client_helper.local_path(self, d_res_name, d_vol_nr)
+        except Exception as e:
+            raise exception.VolumeBackendAPIException(data=e.message)
 
     def _push_drbd_options(self, d_res_name):
         res_opt = {'resource': d_res_name,
@@ -540,7 +492,7 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
                                          self._vol_size_to_dm(volume['size']),
                                          props)
             self._check_result(res)
-            drbd_vol = self._fetch_answer_data(res, dm_const.VOL_ID)
+            drbd_vol = self.fetch_answer_data(res, dm_const.VOL_ID)
 
         # If we crashed between create_volume and the deploy call,
         # the volume might be defined but not exist on any server. Oh my.
@@ -616,7 +568,7 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
         LOG.debug("create vol from snap: from %(snap)s make %(vol)s",
                   {'snap': snapshot['id'], 'vol': volume['id']})
         # TODO(PM): Consistency groups.
-        d_res_name, sname, sprop = self._resource_and_snap_data_from_snapshot(
+        d_res_name, sname, __ = self._resource_and_snap_data_from_snapshot(
             snapshot)
 
         new_res = self.is_clean_volume_name(volume['id'], DM_VN_PREFIX)
@@ -682,9 +634,8 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
                                                   self.drbdmanage_redundancy)
         self._check_result(res)
 
-        location_info = ('DrbdManageBaseDriver:%(cvol)s:%(dbus)s' %
-                         {'cvol': self.dm_control_vol,
-                          'dbus': self.drbdmanage_dbus_name})
+        location_info = ('DrbdManageBaseDriver:%(cvol)s' %
+                         {'cvol': self.dm_control_vol})
 
         # add volumes
         res, rl = self.call_or_reconnect(self.odm.list_volumes,
@@ -780,9 +731,11 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
 
         if not d_res_name:
             # resource already gone?
-            LOG.warning(_LW("snapshot: %s not found, "
-                            "skipping delete operation"), snapshot['id'])
-            LOG.info(_LI('Successfully deleted snapshot: %s'), snapshot['id'])
+            LOG.warning(self._LW("snapshot: %s not found, "
+                                 "skipping delete operation"),
+                        snapshot['id'])
+            LOG.info(self._LI('Successfully deleted snapshot: %s'),
+                     snapshot['id'])
             return True
 
         res = self.call_or_reconnect(self.odm.remove_snapshot,
@@ -903,7 +856,7 @@ class DrbdManageDrbdDriver(DrbdManageBaseDriver):
         return {
             'driver_volume_type': 'drbd',
             'data': {
-                'provider_location': ' '.join('drbd', nodename),
+                'provider_location': ' '.join(('drbd', nodename)),
                 'device': volume_path,
                 # TODO(pm): consistency groups
                 'devices': [volume_path],
@@ -1020,7 +973,6 @@ class DrbdManageDrbdDriver(DrbdManageBaseDriver):
         return self._return_connection_data(nodename, volume)
 
     def initialize_connection(self, volume, connector):
-
         nodename = connector["host"]
 
         return self._return_connection_data(nodename, volume)
@@ -1044,7 +996,7 @@ class DrbdManageDrbdDriver(DrbdManageBaseDriver):
 
         if len(data) < 1:
             # already removed?!
-            LOG.info(_LI('DRBD connection for %s already removed'),
+            LOG.info(self._LI('DRBD connection for %s already removed'),
                      volume['id'])
         elif len(data) == 1:
             __, __, props, __ = data[0]
@@ -1071,7 +1023,7 @@ class DrbdManageDrbdDriver(DrbdManageBaseDriver):
                 self._check_result(res, ignore=[dm_exc.DM_ENOENT])
         else:
             # more than one assignment?
-            LOG.error(_LE("DRBDmanage: too many assignments returned."))
+            LOG.error(self._LE("DRBDmanage: too many assignments returned."))
         return
 
     def remove_export(self, context, volume):
