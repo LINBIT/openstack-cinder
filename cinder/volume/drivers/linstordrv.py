@@ -202,6 +202,9 @@ class LinstorBaseDriver(driver.BaseVD):
         pass
 
     def _get_resource_nodes(self, resource):
+        """
+        Returns all available resource nodes in a given DRBD cluster
+        """
         with linstor.Linstor(self.default_uri) as lin:
             rsc_list_reply = lin.resource_list(filter_by_resources=resource)
 
@@ -210,6 +213,19 @@ class LinstorBaseDriver(driver.BaseVD):
                 rsc_list.append(node.node_name)
 
             return rsc_list
+
+    def _get_linstor_nodes(self):
+        """
+        Returns all available DRBD nodes
+        """
+        with linstor.Linstor(self.default_uri) as lin:
+            node_list_reply = lin.node_list()
+
+            node_list = []
+            for node in node_list_reply[0].proto_msg.nodes:
+                node_list.append(node.name)
+
+            return node_list
 
     def _debug_api_reply(self, api_response):
         for response in api_response:
@@ -259,11 +275,37 @@ class LinstorBaseDriver(driver.BaseVD):
 
     # TODO(wp)
     def create_volume_from_snapshot(self, volume, snapshot):
-        pass
 
-    # TODO(wp)
+        src_rsc_name = self._drbd_resource_name_from_cinder_snapshot(snapshot)
+        src_snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
+        new_vol_name = self._drbd_resource_name_from_cinder_volume(volume)
+
+        with linstor.Linstor("linstor://localhost") as lin:
+
+            # New RD
+            rd_reply = lin.resource_dfn_create(new_vol_name)
+            if not self._debug_api_reply(rd_reply):
+                print("Error on creating a new RD")
+
+            # New VD from Snap
+            vd_reply = lin.snapshot_volume_definition_restore(src_rsc_name, src_snap_name, new_vol_name)
+            if not self._debug_api_reply(vd_reply):
+                print("Error on creating a new VD from snap")
+
+            # New RSC from Snap
+            # Assumes restoring to all the available nodes
+            nodes = self._get_linstor_nodes()
+            rsc_reply = lin.snapshot_resource_restore(nodes, src_rsc_name, src_snap_name, new_vol_name)
+            if not self._debug_api_reply(rsc_reply):
+                print("Error on creating RSCs from snap")
+
+
+    # TODO(wp) TEST
     def revert_to_snapshot(self, context, volume, snapshot):
-        pass
+
+        src_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+        new_rsc_name = self._drbd_resource_name_from_cinder_snapshot(snapshot)
+
 
 
     #
@@ -649,8 +691,8 @@ class LinstorDrbdDriver(LinstorBaseDriver):
             # if len(str(rd_list[0])) == 0:
 
             # Create a New RD
-            LOG.debug("No existing Resource Definition found.  Created a new one.")
-            rd_reply = lin.resource_dfn_create(rsc_name)  # Need error checking
+            # LOG.debug("No existing Resource Definition found.  Created a new one.")
+            rd_reply = lin.resource_dfn_create(rsc_name)  # TODO Need error sorting
             self._debug_api_reply(rd_reply)
 
             rd_list = lin.resource_dfn_list()
@@ -706,13 +748,13 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
                 # Delete VD
                 print('Deleting Volume Definition for ' + drbd_rsc_name)
-                vd_reply = lin.volume_dfn_delete(drbd_rsc_name, 0)  # Need work here for volume number
+                vd_reply = lin.volume_dfn_delete(drbd_rsc_name, 0)
                 self._debug_api_reply(vd_reply)
                 time.sleep(1)
 
                 # Delete RD
                 print('Deleting Resource Definition for ' + drbd_rsc_name)
-                rd_reply = lin.resource_dfn_delete(drbd_rsc_name)
+                rd_reply = lin.resource_dfn_delete(drbd_rsc_name) # Will fail if snap exists
                 self._debug_api_reply(rd_reply)
 
         LOG.debug('EXIT: delete_volume @ DRBD')
