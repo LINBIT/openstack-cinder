@@ -46,7 +46,7 @@ from cinder.volume import driver
 import linstor
 
 
-# Be sure to configure in cinder.conf to override values
+# To override these values, update cinder.conf in /etc/cinder/
 linstor_opts = [
 
     cfg.IntOpt('linstor_redundancy',
@@ -206,7 +206,7 @@ class LinstorBaseDriver(driver.BaseVD):
                     # TODO(wp) - Update w/ latest linstor-server release
                     sp_node['sp_free'] = CINDER_UNKNOWN
                 else:
-                    sp_node['sp_free'] = round(node.free_space.free_space / (units.Gi / units.Ki), 2)
+                    sp_node['sp_free'] = round(node.free_space.free_capacity / (units.Gi / units.Ki), 2)
 
                 # Driver
                 if node.driver == "LvmDriver":
@@ -966,7 +966,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         LOG.debug('VOL IMG SVC :' + str(image_service))
         LOG.debug('VOL IMG ID :' + str(image_id))
 
-        # self.create_volume(volume)
+        self.create_volume(volume)
 
         LOG.debug('EXIT: copy_image_to_volume @ DRBD')
         pass
