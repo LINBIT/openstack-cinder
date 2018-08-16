@@ -966,7 +966,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         LOG.debug('VOL IMG SVC :' + str(image_service))
         LOG.debug('VOL IMG ID :' + str(image_id))
 
-        self.create_volume(volume)
+        # self.create_volume(volume)
 
         LOG.debug('EXIT: copy_image_to_volume @ DRBD')
         pass
