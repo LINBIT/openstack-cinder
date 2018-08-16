@@ -1,4 +1,4 @@
-# Copyright (c) 2014 LINBIT HA Solutions GmbH
+# Copyright (c) 2014-2018 LINBIT HA Solutions GmbH
 # All Rights Reserved.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -16,25 +16,26 @@
 
 """
 
-This driver connects Cinder to an installed DRBDmanage instance, see
-http://drbd.linbit.com/users-guide-9.0/ch-openstack.html
+This driver connects Cinder to an installed Linstor instance, see
+https://docs.linbit.com/docs/users-guide-9.0/#ch-openstack
 for more details.
 
 """
 
-
-import eventlet
+from eventlet import greenthread
 import json
 import six
 import socket
 import time
 import uuid
+import sys
 
+from oslo_concurrency import processutils
 from oslo_config import cfg
 from oslo_log import log as logging
+from oslo_utils import excutils
 from oslo_utils import importutils
 from oslo_utils import units
-
 
 from cinder import exception
 from cinder.i18n import _
@@ -42,248 +43,97 @@ from cinder import interface
 from cinder.volume import configuration
 from cinder.volume import driver
 
-try:
-    import dbus
-    import drbdmanage.consts as dm_const
-    import drbdmanage.exceptions as dm_exc
-    import drbdmanage.utils as dm_utils
-except ImportError:
-    # Used for the tests, when no DRBDmanage is installed
-    dbus = None
-    dm_const = None
-    dm_exc = None
-    dm_utils = None
+import linstor
 
 
-LOG = logging.getLogger(__name__)
+# Be sure to configure in cinder.conf to override values
+linstor_opts = [
 
-drbd_opts = [
-    cfg.IntOpt('drbdmanage_redundancy',
+    cfg.IntOpt('linstor_redundancy',
                default=1,
                help='Number of nodes that should replicate the data.'),
-    cfg.StrOpt('drbdmanage_resource_policy',
-               default='{"ratio": "0.51", "timeout": "60"}',
-               help='Resource deployment completion wait policy.'),
-    cfg.StrOpt('drbdmanage_disk_options',
+    cfg.StrOpt('linstor_disk_options',
                default='{"c-min-rate": "4M"}',
                help='Disk options to set on new resources. '
-               'See http://www.drbd.org/en/doc/users-guide-90/re-drbdconf'
-               ' for all the details.'),
-    cfg.StrOpt('drbdmanage_net_options',
+                    'See http://www.drbd.org/en/doc/users-guide-90/re-drbdconf'
+                    ' for all the details.'),
+    cfg.StrOpt('linstor_net_options',
                default='{"connect-int": "4", "allow-two-primaries": "yes", '
-               '"ko-count": "30", "max-buffers": "20000", '
-               '"ping-timeout": "100"}',
+                       '"ko-count": "30", "max-buffers": "20000", '
+                       '"ping-timeout": "100"}',
                help='Net options to set on new resources. '
-               'See http://www.drbd.org/en/doc/users-guide-90/re-drbdconf'
-               ' for all the details.'),
-    cfg.StrOpt('drbdmanage_resource_options',
+                    'See http://www.drbd.org/en/doc/users-guide-90/re-drbdconf'
+                    ' for all the details.'),
+    cfg.StrOpt('linstor_resource_options',
                default='{"auto-promote-timeout": "300"}',
                help='Resource options to set on new resources. '
-               'See http://www.drbd.org/en/doc/users-guide-90/re-drbdconf'
-               ' for all the details.'),
-    cfg.StrOpt('drbdmanage_snapshot_policy',
-               default='{"count": "1", "timeout": "60"}',
-               help='Snapshot completion wait policy.'),
-    cfg.StrOpt('drbdmanage_resize_policy',
-               default='{"timeout": "60"}',
-               help='Volume resize completion wait policy.'),
-    cfg.StrOpt('drbdmanage_resource_plugin',
-               default="drbdmanage.plugins.plugins.wait_for.WaitForResource",
-               help='Resource deployment completion wait plugin.'),
-    cfg.StrOpt('drbdmanage_snapshot_plugin',
-               default="drbdmanage.plugins.plugins.wait_for.WaitForSnapshot",
-               help='Snapshot completion wait plugin.'),
-    cfg.StrOpt('drbdmanage_resize_plugin',
-               default="drbdmanage.plugins.plugins.wait_for.WaitForVolumeSize",
-               help='Volume resize completion wait plugin.'),
-    cfg.BoolOpt('drbdmanage_devs_on_controller',
-                default=True,
-                help='If set, the c-vol node will receive a useable '
-                '/dev/drbdX device, even if the actual data is stored on '
-                'other nodes only. '
-                'This is useful for debugging, maintenance, and to be '
-                'able to do the iSCSI export from the c-vol node.')
-    # TODO(PM): offsite_redundancy?
-    # TODO(PM): choose DRBDmanage storage pool?
-]
+                    'See http://www.drbd.org/en/doc/users-guide-90/re-drbdconf'
+                    ' for all the details.'),
 
+    cfg.StrOpt('linstor_default_volume_group_name',
+               default='vg-1',
+               help='Default Volume Group name for Linstor. Not Cinder Volume.'),
+
+    cfg.StrOpt('linstor_default_uri',
+               default='linstor://localhost',
+               help='Default storate URI for Linstor.'),
+
+    cfg.StrOpt('linstor_default_storage_pool_name',
+               default='DfltStorPool',
+               help='Default Storage Pool name for Linstor.'),
+
+    cfg.IntOpt('linstor_default_resource_size',
+               default=1024000,
+               help='Default resource size in Kibibytes.  1024000 = 1GiB'),
+
+    cfg.FloatOpt('linstor_snapshot_upscale_factor',
+               default=1.2,
+               help='Default Upscaling size factor for a Linstor snapshot.'),
+
+]
+LOG = logging.getLogger(__name__)
 
 CONF = cfg.CONF
-CONF.register_opts(drbd_opts, group=configuration.SHARED_CONF_GROUP)
+CONF.register_opts(linstor_opts, group=configuration.SHARED_CONF_GROUP)
 
-
-AUX_PROP_CINDER_VOL_ID = "cinder-id"
-AUX_PROP_TEMP_CLIENT = "cinder-is-temp-client"
-DM_VN_PREFIX = 'CV_'  # sadly 2CV isn't allowed by DRBDmanage
+# CINDER
+CINDER_UNKNOWN = 'unknown'
+DM_VN_PREFIX = 'CV_'
 DM_SN_PREFIX = 'SN_'
+LVM = 'Lvm'
 
 
-# Need to be set later, so that the tests can fake
-CS_DEPLOYED = None
-CS_DISKLESS = None
-CS_UPD_CON = None
+class LinstorBaseDriver(driver.BaseVD):
+    """Cinder driver that uses Linstor for storage."""
 
-
-class DrbdManageBaseDriver(driver.VolumeDriver):
-    """Cinder driver that uses DRBDmanage for storage."""
-
-    VERSION = '1.1.0'
-    drbdmanage_dbus_name = 'org.drbd.drbdmanaged'
-    drbdmanage_dbus_interface = '/interface'
+    VERSION = '0.0.1'
 
     # ThirdPartySystems wiki page
-    CI_WIKI_NAME = "Cinder_Jenkins"
+    CI_WIKI_NAME = 'Cinder_Jenkins'
 
     def __init__(self, *args, **kwargs):
-        self.empty_list = dbus.Array([], signature="a(s)")
-        self.empty_dict = dbus.Array([], signature="a(ss)")
+        super(LinstorBaseDriver, self).__init__(*args, **kwargs)
+        LOG.debug('START: Base Init Linstor')
 
-        super(DrbdManageBaseDriver, self).__init__(*args, **kwargs)
+        self.configuration.append_config_values(linstor_opts)
+        self.default_pool = self.configuration.safe_get('linstor_default_storage_pool_name')
+        self.default_uri = self.configuration.safe_get('linstor_default_uri')
+        self.default_rsc_size = self.configuration.safe_get('linstor_default_resource_size')
+        self.default_snap_factor = self.configuration.safe_get('linstor_snapshot_upscale_factor')
+        self.default_vg_name = self.configuration.safe_get('linstor_default_volume_group_name')
 
-        self.configuration.append_config_values(drbd_opts)
-        if not self.drbdmanage_dbus_name:
-            self.drbdmanage_dbus_name = 'org.drbd.drbdmanaged'
-        if not self.drbdmanage_dbus_interface:
-            self.drbdmanage_dbus_interface = '/interface'
-        self.drbdmanage_redundancy = int(getattr(self.configuration,
-                                                 'drbdmanage_redundancy', 1))
-        self.drbdmanage_devs_on_controller = bool(
-            getattr(self.configuration,
-                    'drbdmanage_devs_on_controller',
-                    True))
-        self.dm_control_vol = ".drbdctrl"
-
-        self.backend_name = self.configuration.safe_get(
-            'volume_backend_name') or 'drbdmanage'
-
-        js_decoder = json.JSONDecoder()
-        self.policy_resource = js_decoder.decode(
-            self.configuration.safe_get('drbdmanage_resource_policy'))
-        self.policy_snapshot = js_decoder.decode(
-            self.configuration.safe_get('drbdmanage_snapshot_policy'))
-        self.policy_resize = js_decoder.decode(
-            self.configuration.safe_get('drbdmanage_resize_policy'))
-
-        self.resource_options = js_decoder.decode(
-            self.configuration.safe_get('drbdmanage_resource_options'))
-        self.net_options = js_decoder.decode(
-            self.configuration.safe_get('drbdmanage_net_options'))
-        self.disk_options = js_decoder.decode(
-            self.configuration.safe_get('drbdmanage_disk_options'))
-
-        self.plugin_resource = self.configuration.safe_get(
-            'drbdmanage_resource_plugin')
-        self.plugin_snapshot = self.configuration.safe_get(
-            'drbdmanage_snapshot_plugin')
-        self.plugin_resize = self.configuration.safe_get(
-            'drbdmanage_resize_plugin')
-
-        # needed as per pep8:
-        #   F841 local variable 'CS_DEPLOYED' is assigned to but never used
-        global CS_DEPLOYED, CS_DISKLESS, CS_UPD_CON
-        CS_DEPLOYED = dm_const.CSTATE_PREFIX + dm_const.FLAG_DEPLOY
-        CS_DISKLESS = dm_const.CSTATE_PREFIX + dm_const.FLAG_DISKLESS
-        CS_UPD_CON = dm_const.CSTATE_PREFIX + dm_const.FLAG_UPD_CON
-
-    def dbus_connect(self):
-        self.odm = dbus.SystemBus().get_object(self.drbdmanage_dbus_name,
-                                               self.drbdmanage_dbus_interface)
-        self.odm.ping()
-
-    def call_or_reconnect(self, fn, *args):
-        """Call DBUS function; on a disconnect try once to reconnect."""
-        try:
-            return fn(*args)
-        except dbus.DBusException as e:
-            LOG.warning("Got disconnected; trying to reconnect. (%s)", e)
-            self.dbus_connect()
-            # Old function object is invalid, get new one.
-            return getattr(self.odm, fn._method_name)(*args)
-
-    def _fetch_answer_data(self, res, key, level=None, req=True):
-        for code, fmt, data in res:
-            if code == dm_exc.DM_INFO:
-                if level and level != fmt:
-                    continue
-
-                value = [v for k, v in data if k == key]
-                if value:
-                    if len(value) == 1:
-                        return value[0]
-                    else:
-                        return value
-
-        if req:
-            if level:
-                l = level + ":" + key
-            else:
-                l = key
-
-            msg = _('DRBDmanage driver error: expected key "%s" '
-                    'not in answer, wrong DRBDmanage version?') % l
-            LOG.error(msg)
-            raise exception.VolumeDriverException(message=msg)
-
-        return None
-
-    def do_setup(self, context):
-        """Any initialization the volume driver does while starting."""
-        super(DrbdManageBaseDriver, self).do_setup(context)
-        self.dbus_connect()
-
-    def check_for_setup_error(self):
-        """Verify that requirements are in place to use DRBDmanage driver."""
-        if not all((dbus, dm_exc, dm_const, dm_utils)):
-            msg = _('DRBDmanage driver setup error: some required '
-                    'libraries (dbus, drbdmanage.*) not found.')
-            LOG.error(msg)
-            raise exception.VolumeDriverException(message=msg)
-        if self.odm.ping() != 0:
-            message = _('Cannot ping DRBDmanage backend')
-            raise exception.VolumeBackendAPIException(data=message)
+        # LOG.debug('CONFIG URI: '+str(self.default_uri))
 
     def _clean_uuid(self):
         """Returns a UUID string, WITHOUT braces."""
-        # Some uuid library versions put braces around the result!?
+        # Some uuid library versions put braces around the result.
         # We don't want them, just a plain [0-9a-f-]+ string.
         id = str(uuid.uuid4())
         id = id.replace("{", "")
         id = id.replace("}", "")
         return id
 
-    def _check_result(self, res, ignore=None, ret=0):
-        seen_success = False
-        seen_error = False
-        result = ret
-        for (code, fmt, arg_l) in res:
-            # convert from DBUS to Python
-            arg = dict(arg_l)
-            if ignore and code in ignore:
-                if not result:
-                    result = code
-                continue
-            if code == dm_exc.DM_SUCCESS:
-                seen_success = True
-                continue
-            if code == dm_exc.DM_INFO:
-                continue
-            seen_error = _("Received error string: %s") % (fmt % arg)
-
-        if seen_error:
-            raise exception.VolumeBackendAPIException(data=seen_error)
-        if seen_success:
-            return ret
-        # by default okay - or the ignored error code.
-        return ret
-
-    # DRBDmanage works in kiB units; Cinder uses GiB.
-    def _vol_size_to_dm(self, size):
-        return size * units.Gi / units.Ki
-
-    def _vol_size_to_cinder(self, size):
-        return size * units.Ki / units.Gi
-
-    def is_clean_volume_name(self, name, prefix):
+    def _is_clean_volume_name(self, name, prefix):
         try:
             if (name.startswith(CONF.volume_name_template % "") and
                     uuid.UUID(name[7:]) is not None):
@@ -297,357 +147,128 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
         except ValueError:
             return None
 
-    def _call_policy_plugin(self, plugin, pol_base, pol_this):
-        """Returns True for done, False for timeout."""
-
-        pol_inp_data = dict(pol_base)
-        pol_inp_data.update(pol_this,
-                            starttime=str(time.time()))
-
-        retry = 0
-        while True:
-            res, pol_result = self.call_or_reconnect(
-                self.odm.run_external_plugin,
-                plugin,
-                pol_inp_data)
-            self._check_result(res)
-
-            if pol_result['result'] == dm_const.BOOL_TRUE:
-                return True
-
-            if pol_result['timeout'] == dm_const.BOOL_TRUE:
-                return False
-
-            eventlet.sleep(min(0.5 + retry / 5, 2))
-            retry += 1
-
-    def _wait_for_node_assignment(self, res_name, vol_nr, nodenames,
-                                  filter_props=None, timeout=90,
-                                  check_vol_deployed=True):
-        """Return True as soon as one assignment matches the filter."""
-
-        # TODO(LINBIT): unify with policy plugins
-
-        if not filter_props:
-            filter_props = self.empty_dict
-
-        end_time = time.time() + timeout
-
-        retry = 0
-        while time.time() < end_time:
-            res, assgs = self.call_or_reconnect(self.odm.list_assignments,
-                                                nodenames, [res_name], 0,
-                                                filter_props, self.empty_list)
-            self._check_result(res)
-
-            if len(assgs) > 0:
-                for assg in assgs:
-                    vols = assg[3]
-
-                    for v_nr, v_prop in vols:
-                        if (v_nr == vol_nr):
-                            if not check_vol_deployed:
-                                # no need to check
-                                return True
-
-                            if v_prop[CS_DEPLOYED] == dm_const.BOOL_TRUE:
-                                return True
-
-            retry += 1
-            # Not yet
-            LOG.warning('Try #%(try)d: Volume "%(res)s"/%(vol)d '
-                        'not yet deployed on "%(host)s", waiting.',
-                        {'try': retry, 'host': nodenames,
-                         'res': res_name, 'vol': vol_nr})
-
-            eventlet.sleep(min(0.5 + retry / 5, 2))
-
-        # Timeout
-        return False
-
-    def _priv_hash_from_volume(self, volume):
-        return dm_utils.dict_to_aux_props({
-            AUX_PROP_CINDER_VOL_ID: volume['id'],
-        })
-
-    def snapshot_name_from_cinder_snapshot(self, snapshot):
-        sn_name = self.is_clean_volume_name(snapshot['id'], DM_SN_PREFIX)
+    def _snapshot_name_from_cinder_snapshot(self, snapshot):
+        sn_name = self._is_clean_volume_name(snapshot['id'], DM_SN_PREFIX)
+        LOG.debug('SNAP NAME: '+str(sn_name))
         return sn_name
 
-    def _res_and_vl_data_for_volume(self, volume, empty_ok=False):
-        """Find DRBD resource and volume ID.
+    def _cinder_volume_name_from_drbd_resource(self, rsc_name):
+        cinder_volume_name = rsc_name.split(DM_VN_PREFIX)[1]
+        return cinder_volume_name
 
-        A DRBD resource might consist of several "volumes"
-        (think consistency groups).
-        So we have to find the number of the volume within one resource.
-        Returns resource name, volume number, and resource
-        and volume properties.
-        """
+    def _drbd_resource_name_from_cinder_snapshot(self, snapshot):
+        drbd_resource_name = DM_VN_PREFIX + str(snapshot['volume_id'])
+        LOG.debug('RSC NAME: ' + str(drbd_resource_name))
+        return drbd_resource_name
 
-        # If we get a string, use it as-is.
-        # Else it's a dictionary; then get the ID.
-        if isinstance(volume, six.string_types):
-            v_uuid = volume
-        else:
-            v_uuid = volume['id']
+    def _drbd_resource_name_from_cinder_volume(self, volume):
+        drbd_resource_name = DM_VN_PREFIX + str(volume['id'])
+        return drbd_resource_name
 
-        res, rl = self.call_or_reconnect(self.odm.list_volumes,
-                                         self.empty_dict,
-                                         0,
-                                         dm_utils.dict_to_aux_props(
-                                             {AUX_PROP_CINDER_VOL_ID: v_uuid}),
-                                         self.empty_dict)
-        self._check_result(res)
+    def _get_volume_stats(self):
 
-        if not rl:
-            if empty_ok:
-                LOG.debug("No volume %s found.", v_uuid)
-                return None, None, None, None
-            raise exception.VolumeBackendAPIException(
-                data=_("volume %s not found in drbdmanage") % v_uuid)
-        if len(rl) > 1:
-            raise exception.VolumeBackendAPIException(
-                data=_("multiple resources with name %s found by drbdmanage") %
-                v_uuid)
+        data = {}
+        data["volume_backend_name"] = self.configuration.safe_get('volume_backend_name')
+        data["vendor_name"] = 'Open Source'
+        data["driver_version"] = self.VERSION
+        data["pools"] = []
 
-        (r_name, r_props, vols) = rl[0]
-        if len(vols) != 1:
-            raise exception.VolumeBackendAPIException(
-                data=_("not exactly one volume with id %s") %
-                v_uuid)
+        sp_data = self._get_sp()
 
-        (v_nr, v_props) = vols[0]
+        num_vols = 1    # TODO
 
-        LOG.debug("volume %(uuid)s is %(res)s/%(nr)d; %(rprop)s, %(vprop)s",
-                  {'uuid': v_uuid, 'res': r_name, 'nr': v_nr,
-                   'rprop': dict(r_props), 'vprop': dict(v_props)})
+        # LOG.debug('S POOL:'+str(sp_data[0]["sp_free"]))
+        LOG.debug(sp_data[0])
 
-        return r_name, v_nr, r_props, v_props
+        location_info = 'LinstorDrbdDriver:'+self.default_uri
 
-    def _resource_and_snap_data_from_snapshot(self, snapshot, empty_ok=False):
-        """Find DRBD resource and snapshot name from the snapshot ID."""
-        s_uuid = snapshot['id']
-        res, rs = self.call_or_reconnect(self.odm.list_snapshots,
-                                         self.empty_dict,
-                                         self.empty_dict,
-                                         0,
-                                         dm_utils.dict_to_aux_props(
-                                             {AUX_PROP_CINDER_VOL_ID: s_uuid}),
-                                         self.empty_dict)
-        self._check_result(res)
+        single_pool = {}
+        single_pool["pool_name"] = data["volume_backend_name"]
+        single_pool["free_capacity_gb"] = sp_data[0]['sp_free']
+        single_pool["total_capacity_gb"] = CINDER_UNKNOWN       # TODO(wp) Update
+        single_pool["reserved_percentage"] = self.configuration.reserved_percentage
+        single_pool["location_info"] = location_info
+        single_pool["total_volumes"] = num_vols
+        single_pool["filter_function"] = self.get_filter_function()
+        single_pool["goodness_function"] = self.get_goodness_function()
+        single_pool["QoS_support"] = False
 
-        if not rs:
-            if empty_ok:
-                return None
-            else:
-                raise exception.VolumeBackendAPIException(
-                    data=_("no snapshot with id %s found in drbdmanage") %
-                    s_uuid)
-        if len(rs) > 1:
-            raise exception.VolumeBackendAPIException(
-                data=_("multiple resources with snapshot ID %s found") %
-                s_uuid)
+        data["pools"].append(single_pool)
 
-        (r_name, snaps) = rs[0]
-        if len(snaps) != 1:
-            raise exception.VolumeBackendAPIException(
-                data=_("not exactly one snapshot with id %s") % s_uuid)
+        return data
 
-        (s_name, s_props) = snaps[0]
+    # TODO(wp) Placeholder for the moment
+    def _get_local_path(self, volume):
+        pass
 
-        LOG.debug("snapshot %(uuid)s is %(res)s/%(snap)s",
-                  {'uuid': s_uuid, 'res': r_name, 'snap': s_name})
+    def _get_resource_nodes(self, resource):
+        with linstor.Linstor(self.default_uri) as lin:
+            rsc_list_reply = lin.resource_list(filter_by_resources=resource)
 
-        return r_name, s_name, s_props
+            rsc_list = []
+            for node in rsc_list_reply[0].proto_msg.resource_states:
+                rsc_list.append(node.node_name)
 
-    def _resource_name_volnr_for_volume(self, volume, empty_ok=False):
-        res, vol, __, __ = self._res_and_vl_data_for_volume(volume, empty_ok)
-        return res, vol
+            return rsc_list
 
-    def local_path(self, volume):
-        d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(volume)
+    def _debug_api_reply(self, api_response):
+        for response in api_response:
+            LOG.debug("API: "+str(response))
 
-        res, data = self.call_or_reconnect(self.odm.text_query,
-                                           [dm_const.TQ_GET_PATH,
-                                            d_res_name,
-                                            str(d_vol_nr)])
-        self._check_result(res)
+        return linstor.Linstor.all_api_responses_success(api_response)
 
-        if len(data) == 1:
-            return data[0]
+    def do_setup(self, context):
+        super(LinstorBaseDriver, self).do_setup(context)
 
-        message = _('Got bad path information from DRBDmanage! (%s)') % data
-        raise exception.VolumeBackendAPIException(data=message)
+    #
+    # Snapshot
+    #
+    def create_snapshot(self, snapshot):
+        LOG.debug('ENTER: create_snapshot @ DRBD Base')
 
-    def _push_drbd_options(self, d_res_name):
-        res_opt = {'resource': d_res_name,
-                   'target': 'resource',
-                   'type': 'reso'}
-        res_opt.update(self.resource_options)
-        res = self.call_or_reconnect(self.odm.set_drbdsetup_props, res_opt)
-        self._check_result(res)
+        snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
+        drbd_rsc_name = self._drbd_resource_name_from_cinder_snapshot(snapshot)
+        node_names = self._get_resource_nodes(drbd_rsc_name)
 
-        res_opt = {'resource': d_res_name,
-                   'target': 'resource',
-                   'type': 'neto'}
-        res_opt.update(self.net_options)
-        res = self.call_or_reconnect(self.odm.set_drbdsetup_props, res_opt)
-        self._check_result(res)
+        with linstor.Linstor(self.default_uri) as lin:
+            snap_reply = lin.snapshot_create(node_names=node_names,
+                                             rsc_name=drbd_rsc_name,
+                                             snapshot_name=snap_name,
+                                             async=False)
 
-        res_opt = {'resource': d_res_name,
-                   'target': 'resource',
-                   'type': 'disko'}
-        res_opt.update(self.disk_options)
-        res = self.call_or_reconnect(self.odm.set_drbdsetup_props, res_opt)
-        self._check_result(res)
+            if not self._debug_api_reply(snap_reply):
+                raise exception.VolumeBackendAPIException("ERROR on creating a DRBD Linstor snapshot")
 
-    def create_volume(self, volume):
-        """Creates a DRBD resource.
+        LOG.debug('EXIT: create_snapshot @ DRBD Base')
 
-        We address it later on via the ID that gets stored
-        as a private property.
-        """
 
-        # TODO(PM): consistency groups
-        d_res_name = self.is_clean_volume_name(volume['id'], DM_VN_PREFIX)
+    def delete_snapshot(self, snapshot):
+        LOG.debug('ENTER: delete_snapshot @ DRBD Base')
 
-        res = self.call_or_reconnect(self.odm.create_resource,
-                                     d_res_name,
-                                     self.empty_dict)
-        self._check_result(res, ignore=[dm_exc.DM_EEXIST], ret=None)
+        snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
+        drbd_rsc_name = self._drbd_resource_name_from_cinder_snapshot(snapshot)
 
-        self._push_drbd_options(d_res_name)
+        with linstor.Linstor(self.default_uri) as lin:
+            snap_reply = lin.snapshot_delete(rsc_name=drbd_rsc_name,
+                                             snapshot_name=snap_name)
 
-        # If we get DM_EEXIST, then the volume already exists, eg. because
-        # deploy gave an error on a previous try (like ENOSPC).
-        # Still, there might or might not be the volume in the resource -
-        # we have to check that explicitly.
-        (__, drbd_vol) = self._resource_name_volnr_for_volume(volume,
-                                                              empty_ok=True)
-        if not drbd_vol:
-            props = self._priv_hash_from_volume(volume)
-            # TODO(PM): properties - redundancy, etc
-            res = self.call_or_reconnect(self.odm.create_volume,
-                                         d_res_name,
-                                         self._vol_size_to_dm(volume['size']),
-                                         props)
-            self._check_result(res)
-            drbd_vol = self._fetch_answer_data(res, dm_const.VOL_ID)
+            if not self._debug_api_reply(snap_reply):
+                raise exception.VolumeBackendAPIException("ERROR on deleting a DRBD Linstor snapshot")
 
-        # If we crashed between create_volume and the deploy call,
-        # the volume might be defined but not exist on any server. Oh my.
-        res = self.call_or_reconnect(self.odm.auto_deploy,
-                                     d_res_name, self.drbdmanage_redundancy,
-                                     0, False)
-        self._check_result(res)
+        LOG.debug('EXIT: delete_snapshot @ DRBD Base')
 
-        okay = self._call_policy_plugin(self.plugin_resource,
-                                        self.policy_resource,
-                                        dict(resource=d_res_name,
-                                             volnr=str(drbd_vol)))
-        if not okay:
-            message = (_('DRBDmanage timeout waiting for volume creation; '
-                         'resource "%(res)s", volume "%(vol)s"') %
-                       {'res': d_res_name, 'vol': volume['id']})
-            raise exception.VolumeBackendAPIException(data=message)
-
-        if self.drbdmanage_devs_on_controller:
-            # TODO(pm): CG
-            res = self.call_or_reconnect(self.odm.assign,
-                                         socket.gethostname(),
-                                         d_res_name,
-                                         [(dm_const.FLAG_DISKLESS,
-                                           dm_const.BOOL_TRUE)])
-            self._check_result(res, ignore=[dm_exc.DM_EEXIST])
-
-        return {}
-
-    def delete_volume(self, volume):
-        """Deletes a resource."""
-        d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(
-            volume,
-            empty_ok=True)
-
-        if not d_res_name:
-            # OK, already gone.
-            return True
-
-        # TODO(PM): check if in use? Ask whether Primary, or just check result?
-        res = self.call_or_reconnect(self.odm.remove_volume,
-                                     d_res_name, d_vol_nr, False)
-        self._check_result(res, ignore=[dm_exc.DM_ENOENT])
-
-        # Ask for volumes in that resource that are not scheduled for deletion.
-        res, rl = self.call_or_reconnect(self.odm.list_volumes,
-                                         [d_res_name],
-                                         0,
-                                         [(dm_const.TSTATE_PREFIX +
-                                           dm_const.FLAG_REMOVE,
-                                           dm_const.BOOL_FALSE)],
-                                         self.empty_list)
-        self._check_result(res)
-
-        # We expect the _resource_ to be here still (we just got a volnr from
-        # it!), so just query the volumes.
-        # If the resource has no volumes anymore, the current DRBDmanage
-        # version (errorneously, IMO) returns no *resource*, too.
-        if len(rl) > 1:
-            message = _('DRBDmanage expected one resource ("%(res)s"), '
-                        'got %(n)d') % {'res': d_res_name, 'n': len(rl)}
-            raise exception.VolumeBackendAPIException(data=message)
-
-        # Delete resource, if empty
-        if (not rl) or (not rl[0]) or not rl[0][2]:
-            res = self.call_or_reconnect(self.odm.remove_resource,
-                                         d_res_name, False)
-            self._check_result(res, ignore=[dm_exc.DM_ENOENT])
-
+    # TODO(wp)
     def create_volume_from_snapshot(self, volume, snapshot):
-        """Creates a volume from a snapshot."""
+        pass
 
-        LOG.debug("create vol from snap: from %(snap)s make %(vol)s",
-                  {'snap': snapshot['id'], 'vol': volume['id']})
-        # TODO(PM): Consistency groups.
-        d_res_name, sname, sprop = self._resource_and_snap_data_from_snapshot(
-            snapshot)
+    # TODO(wp)
+    def revert_to_snapshot(self, context, volume, snapshot):
+        pass
 
-        new_res = self.is_clean_volume_name(volume['id'], DM_VN_PREFIX)
 
-        r_props = self.empty_dict
-        # TODO(PM): consistency groups => different volume number possible
-        new_vol_nr = 0
-        v_props = [(new_vol_nr, self._priv_hash_from_volume(volume))]
-
-        res = self.call_or_reconnect(self.odm.restore_snapshot,
-                                     new_res,
-                                     d_res_name,
-                                     sname,
-                                     r_props,
-                                     v_props)
-        self._check_result(res, ignore=[dm_exc.DM_ENOENT])
-
-        self._push_drbd_options(d_res_name)
-
-        # TODO(PM): CG
-        okay = self._call_policy_plugin(self.plugin_resource,
-                                        self.policy_resource,
-                                        dict(resource=new_res,
-                                             volnr=str(new_vol_nr)))
-        if not okay:
-            message = (_('DRBDmanage timeout waiting for new volume '
-                         'after snapshot restore; '
-                         'resource "%(res)s", volume "%(vol)s"') %
-                       {'res': new_res, 'vol': volume['id']})
-            raise exception.VolumeBackendAPIException(data=message)
-
-        if (('size' in volume) and (volume['size'] > snapshot['volume_size'])):
-            LOG.debug("resize volume '%(dst_vol)s' from %(src_size)d to "
-                      "%(dst_size)d",
-                      {'dst_vol': volume['id'],
-                       'src_size': snapshot['volume_size'],
-                       'dst_size': volume['size']})
-            self.extend_volume(volume, volume['size'])
-
+    #
+    # Volume
+    #
     def create_cloned_volume(self, volume, src_vref):
         temp_id = self._clean_uuid()
         snapshot = {'id': temp_id}
@@ -656,145 +277,22 @@ class DrbdManageBaseDriver(driver.VolumeDriver):
                               'volume_id': src_vref['id']})
 
         snapshot['volume_size'] = src_vref['size']
-        self.create_volume_from_snapshot(volume, snapshot)
+        # self.create_volume_from_snapshot(volume, snapshot) #TODO(wp)
 
         self.delete_snapshot(snapshot)
-
-    def _update_volume_stats(self):
-        data = {}
-
-        data["vendor_name"] = 'Open Source'
-        data["driver_version"] = self.VERSION
-        # This has to match the name set in the cinder volume driver spec,
-        # so keep it lowercase
-        data["volume_backend_name"] = self.backend_name
-        data["pools"] = []
-
-        res, free, total = self.call_or_reconnect(self.odm.cluster_free_query,
-                                                  self.drbdmanage_redundancy)
-        self._check_result(res)
-
-        location_info = ('DrbdManageBaseDriver:%(cvol)s:%(dbus)s' %
-                         {'cvol': self.dm_control_vol,
-                          'dbus': self.drbdmanage_dbus_name})
-
-        # add volumes
-        res, rl = self.call_or_reconnect(self.odm.list_volumes,
-                                         self.empty_list,
-                                         0,
-                                         self.empty_dict,
-                                         self.empty_list)
-        self._check_result(res)
-        total_volumes = 0
-        for res in rl:
-            total_volumes += len(res[2])
-
-        # TODO(PM): multiple DRBDmanage instances and/or multiple pools
-        single_pool = {}
-        single_pool.update(dict(
-            pool_name=data["volume_backend_name"],
-            free_capacity_gb=self._vol_size_to_cinder(free),
-            total_capacity_gb=self._vol_size_to_cinder(total),
-            reserved_percentage=self.configuration.reserved_percentage,
-            location_info=location_info,
-            total_volumes=total_volumes,
-            filter_function=self.get_filter_function(),
-            goodness_function=self.get_goodness_function(),
-            QoS_support=False))
-
-        data["pools"].append(single_pool)
-
-        self._stats = data
-        return self._stats
-
-    def extend_volume(self, volume, new_size):
-        d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(volume)
-
-        res = self.call_or_reconnect(self.odm.resize_volume,
-                                     d_res_name, d_vol_nr, -1,
-                                     self._vol_size_to_dm(new_size),
-                                     0)
-        self._check_result(res)
-
-        okay = self._call_policy_plugin(self.plugin_resize,
-                                        self.policy_resize,
-                                        dict(resource=d_res_name,
-                                             volnr=str(d_vol_nr),
-                                             req_size=str(new_size)))
-        if not okay:
-            message = (_('DRBDmanage timeout waiting for volume size; '
-                         'volume ID "%(id)s" (res "%(res)s", vnr %(vnr)d)') %
-                       {'id': volume['id'],
-                        'res': d_res_name, 'vnr': d_vol_nr})
-            raise exception.VolumeBackendAPIException(data=message)
-
-    def create_snapshot(self, snapshot):
-        """Creates a snapshot."""
-        sn_name = self.snapshot_name_from_cinder_snapshot(snapshot)
-
-        d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(
-            snapshot["volume_id"])
-
-        res, data = self.call_or_reconnect(self.odm.list_assignments,
-                                           self.empty_dict,
-                                           [d_res_name],
-                                           0,
-                                           {CS_DISKLESS: dm_const.BOOL_FALSE},
-                                           self.empty_list)
-        self._check_result(res)
-
-        nodes = [d[0] for d in data]
-        if len(nodes) < 1:
-            raise exception.VolumeBackendAPIException(
-                _('Snapshot res "%s" that is not deployed anywhere?') %
-                (d_res_name))
-
-        props = self._priv_hash_from_volume(snapshot)
-        res = self.call_or_reconnect(self.odm.create_snapshot,
-                                     d_res_name, sn_name, nodes, props)
-        self._check_result(res)
-
-        okay = self._call_policy_plugin(self.plugin_snapshot,
-                                        self.policy_snapshot,
-                                        dict(resource=d_res_name,
-                                             snapshot=sn_name))
-        if not okay:
-            message = (_('DRBDmanage timeout waiting for snapshot creation; '
-                         'resource "%(res)s", snapshot "%(sn)s"') %
-                       {'res': d_res_name, 'sn': sn_name})
-            raise exception.VolumeBackendAPIException(data=message)
-
-    def delete_snapshot(self, snapshot):
-        """Deletes a snapshot."""
-
-        d_res_name, sname, _ = self._resource_and_snap_data_from_snapshot(
-            snapshot, empty_ok=True)
-
-        if not d_res_name:
-            # resource already gone?
-            LOG.warning("snapshot: %s not found, "
-                        "skipping delete operation", snapshot['id'])
-            LOG.info('Successfully deleted snapshot: %s', snapshot['id'])
-            return True
-
-        res = self.call_or_reconnect(self.odm.remove_snapshot,
-                                     d_res_name, sname, True)
-        return self._check_result(res, ignore=[dm_exc.DM_ENOENT])
 
 
 # Class with iSCSI interface methods
 @interface.volumedriver
-class DrbdManageIscsiDriver(DrbdManageBaseDriver):
-    """Cinder driver that uses the iSCSI protocol. """
+class LinstorIscsiDriver(LinstorBaseDriver):
+    """Cinder iSCSI driver that uses Linstor for storage."""
 
     def __init__(self, *args, **kwargs):
-        super(DrbdManageIscsiDriver, self).__init__(*args, **kwargs)
+        super(LinstorIscsiDriver, self).__init__(*args, **kwargs)
         target_driver = self.target_mapping[
             self.configuration.safe_get('target_helper')]
 
-        LOG.debug('Attempting to initialize DRBD driver with the '
-                  'following target_driver: %s',
-                  target_driver)
+        LOG.info('START: Linstor iSCSI driver')
 
         self.target_driver = importutils.import_object(
             target_driver,
@@ -803,28 +301,36 @@ class DrbdManageIscsiDriver(DrbdManageBaseDriver):
             executor=self._execute)
 
     def get_volume_stats(self, refresh=False):
-        """Get volume status."""
 
-        self._update_volume_stats()
-        self._stats["storage_protocol"] = "iSCSI"
-        return self._stats
+        LOG.debug('ENTER: get_volume_stats @ iSCSI')
 
+        data = self._get_volume_stats()
+        data["storage_protocol"] = 'iSCSI'
+
+        LOG.debug('EXIT: get_volume_stats @ iSCSI')
+
+        return data
+
+    # TODO(wp)
     def ensure_export(self, context, volume):
-        volume_path = self.local_path(volume)
-        return self.target_driver.ensure_export(
-            context,
-            volume,
-            volume_path)
+        # volume_path = self.local_path(volume)
+        # return self.target_driver.ensure_export(
+        #     context,
+        #     volume,
+        #     volume_path)
+        pass
 
+    # TODO(wp)
     def create_export(self, context, volume, connector):
-        volume_path = self.local_path(volume)
-        export_info = self.target_driver.create_export(
-            context,
-            volume,
-            volume_path)
-
-        return {'provider_location': export_info['location'],
-                'provider_auth': export_info['auth'], }
+        # volume_path = self.local_path(volume)
+        # export_info = self.target_driver.create_export(
+        #     context,
+        #     volume,
+        #     volume_path)
+        #
+        # return {'provider_location': export_info['location'],
+        #         'provider_auth': export_info['auth'], }
+        pass
 
     def remove_export(self, context, volume):
         return self.target_driver.remove_export(context, volume)
@@ -840,231 +346,451 @@ class DrbdManageIscsiDriver(DrbdManageBaseDriver):
                                                        connector,
                                                        **kwargs)
 
-# for backwards compatibility keep the old class name, too
-DrbdManageDriver = DrbdManageIscsiDriver
-
 
 # Class with DRBD transport mode
 @interface.volumedriver
-class DrbdManageDrbdDriver(DrbdManageBaseDriver):
-    """Cinder driver that uses the DRBD protocol. """
+class LinstorDrbdDriver(LinstorBaseDriver):
+    """Cinder DRBD driver that uses Linstor for storage."""
 
     def __init__(self, *args, **kwargs):
-        super(DrbdManageDrbdDriver, self).__init__(*args, **kwargs)
+        LOG.debug('START: Linstor DRBD driver')
 
-    def get_volume_stats(self, refresh=False):
-        """Get volume status."""
+        super(LinstorDrbdDriver, self).__init__(*args, **kwargs)
 
-        self._update_volume_stats()
-        self._stats["storage_protocol"] = "DRBD"
-        return self._stats
+    def _get_sp(self):
 
-    def _return_local_access(self, nodename, volume,
-                             d_res_name=None, volume_path=None):
+        LOG.debug("ENTER: _get_sp @ DRBD")
 
-        if not volume_path:
-            volume_path = self.local_path(volume)
+        with linstor.Linstor(self.default_uri) as lin:
+
+            if not lin.connected:
+                lin.connect()
+
+            # Fetch Storage Pool List
+            sp_list_reply = lin.storage_pool_list() # TODO(wp)-Maybe use lin.volume_list()
+            assert len(str(sp_list_reply[0])), "Empty Storage Pool list"
+
+            sp_list = []
+            node_count = 0
+            for node in sp_list_reply[0].proto_msg.stor_pools:
+                sp_node = {}
+                sp_node['node_uuid'] = node.node_uuid
+                sp_node['node_name'] = node.node_name
+                sp_node['sp_uuid'] = node.stor_pool_uuid
+                sp_node['sp_name'] = node.stor_pool_name
+
+                for prop in node.props:
+                    if "Vg" in prop.key:
+                        sp_node['vg_name'] = prop.value
+                    if "ThinPool" in prop.key:
+                        #LOG.debug(prop.value+" is a thinpool")
+                        thin_pool = True
+
+                # Free Space
+                #
+                # 1. Converted to GiB for cinder
+                #
+                # 2. Trying to optimize below causes incorrect result.
+                #    ex. node.free_space.free_space * (units.Ki / units.Gi) is wrong for 2.7
+                if thin_pool:
+                    sp_node['sp_free'] = CINDER_UNKNOWN # TODO(wp) - Find better way
+                else:
+                    sp_node['sp_free'] = round(node.free_space.free_space / (units.Gi / units.Ki), 2)
+
+                # Driver
+                if node.driver == "LvmDriver":
+                    sp_node['driver_name'] = LVM
+                else:
+                    sp_node['driver_name'] = node.driver
+
+                sp_list.append(sp_node)
+                node_count += 1
+
+            LOG.debug('Found ' + str(node_count) + ' storage pools.')
+            LOG.debug(sp_list)
+
+            LOG.debug("EXIT: _get_sp @ DRBD")
+            return sp_list
+
+    def _get_nodes(self):
+
+        LOG.debug("ENTER: _get_nodes @ DRBD")
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            if not lin.connected:
+                lin.connect()
+
+            # Get Node List
+            node_list_reply = lin.node_list()
+            assert node_list_reply, "Empty response"
+
+            node_list = []
+            if len(str(node_list_reply[0])) == 0:
+                LOG.debug("No LINSTOR nodes found on the network.")
+            else:
+
+                for node in node_list_reply[0].proto_msg.nodes:
+                    # LOG.info('NODE: '+node.name+' = '+node.uuid+' = '+node.net_interfaces[0].address+'\n')
+                    node_item = {}
+                    node_item['node_name'] = node.name
+                    node_item['node_uuid'] = node.uuid
+                    node_item['node_address'] = node.net_interfaces[0].address
+                    node_list.append(node_item)
+
+            LOG.debug("EXIT: _get_nodes @ DRBD")
+            return node_list
+
+    def _get_spd(self):
+
+        LOG.debug("ENTER: _get_spd @ DRBD")
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            if not lin.connected:
+                lin.connect()
+
+            # Storage Pool Definition List
+            spd_list_reply = lin.storage_pool_dfn_list()
+            assert len(str(spd_list_reply[0])), "Empty Storage Pool Definition list"
+
+            node_list = spd_list_reply[0]
+            spd_list = []
+            for node in node_list.proto_msg.stor_pool_dfns:
+                spd_item = {}
+                spd_item['spd_uuid'] = node.uuid
+                spd_item['spd_name'] = node.stor_pool_name
+                spd_list.append(spd_item)
+
+            LOG.debug("EXIT: _get_spd @ DRBD")
+            return spd_list
+
+    def _get_vol(self):
+
+        """
+        Local Path = node['volume'][0].device_path+'@'+node['node_name']
+        """
+
+        LOG.debug("ENTER: _get_vol @ DRBD")
+
+        with linstor.Linstor("linstor://localhost") as lin:
+
+            if not lin.connected:
+                lin.connect()
+
+            vol_list_reply = lin.volume_list()
+
+            if len(str(vol_list_reply[0])) == 0:
+                LOG.debug("EXIT empty: _get_vol @ DRBD")
+                return []
+            else:
+                vol_list = []
+                for volume in vol_list_reply[0].proto_msg.resources:
+                    # print(volume)
+                    vol_node = {}
+                    vol_node['node_name'] = volume.node_name
+                    vol_node['rd_name'] = volume.name
+                    vol_node['volume'] = volume.vlms
+                    vol_list.append(vol_node)
+
+                    LOG.debug("EXIT clean: _get_vol @ DRBD")
+                return vol_list
+
+    def _get_local_path(self, volumes):
+
+        LOG.debug('ENTER: _get_local_path @ DRBD')
+
+        for volume in volumes:
+            if volume['node_name'] == socket.gethostname():
+
+                LOG.debug("EXIT: _get_local_path @ DRBD")
+                return volume['volume'][0].device_path
+
+        message = _('Local Volume not found.')
+        raise exception.VolumeBackendAPIException(data=message)
+
+    def _get_rsc_path(self, rsc_name):
+
+        with linstor.Linstor("linstor://localhost") as lin:
+            rsc_list_reply = lin.resource_list()
+            host_name = str(socket.gethostname())
+
+            for rsc in rsc_list_reply[0].proto_msg.resources:
+                if rsc.name == rsc_name and rsc.node_name == host_name:
+                    for volume in rsc.vlms:
+                        if volume.vlm_nr == 0:
+                            LOG.debug('RSC PATH: '+str(volume.device_path))
+                            return volume.device_path
+
+    def _return_drbd_config(self, volume):
+
+        LOG.debug('ENTER-EXIT: _return_drbd_config @ DRBD')
+        LOG.debug('VOL ID: ' + str(volume['id']))
+
+        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
 
         return {
             'driver_volume_type': 'local',
             'data': {
-                "device_path": volume_path
+                "device_path": str(self._get_rsc_path(full_rsc_name))
             }
         }
 
-    def _return_drbdadm_config(self, volume, nodename,
-                               d_res_name=None, volume_path=None):
+        # return {
+        #     'driver_volume_type': 'drbd',
+        #     'data': {
+        #         'provider_location': "drbd provider",
+        #         'device': "drbd device path",
+        #         'devices': ["dev/one", "dev/two"],
+        #         # 'provider_auth': subst_data['shared-secret'],
+        #         # 'config': config,
+        #         'name': "drbd rsc one"
+        #     }
+        # }
 
-        if not d_res_name:
-            d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(volume)
+    def get_volume_stats(self, refresh=False):
+        # super(LinstorDrbdDriver, self).get_volume_stats()
 
-        res, data = self.call_or_reconnect(
-            self.odm.text_query,
-            ['export_conf_split_up', nodename, d_res_name])
-        self._check_result(res)
+        LOG.debug('ENTER: get_volume_stats @ DRBD')
 
-        config = six.text_type(data.pop(0))
-        subst_data = {}
-        while len(data):
-            k = data.pop(0)
-            subst_data[k] = data.pop(0)
+        data = self._get_volume_stats()
+        data["storage_protocol"] = 'DRBD'
 
-        if not volume_path:
-            volume_path = self.local_path(volume)
+        LOG.debug('EXIT: get_volume_stats @ DRBD')
 
-        return {
-            'driver_volume_type': 'drbd',
-            'data': {
-                'provider_location': ' '.join('drbd', nodename),
-                'device': volume_path,
-                # TODO(pm): consistency groups
-                'devices': [volume_path],
-                'provider_auth': subst_data['shared-secret'],
-                'config': config,
-                'name': d_res_name,
-            }
-        }
+        return data
 
-    def _is_external_node(self, nodename):
-        """Return whether the given node is an "external" node."""
+    def check_for_setup_error(self):
 
-        # If the node accessing the data (the "initiator" in iSCSI speak,
-        # "client" or "target" otherwise) is marked as an FLAG_EXTERNAL
-        # node, it does not have DRBDmanage active - and that means
-        # we have to send the necessary DRBD configuration.
-        #
-        # If DRBDmanage is running there, just pushing the (client)
-        # assignment is enough to make the local path available.
+        LOG.debug('ENTER: check_for_setup_error @ DRBD')
 
-        res, nodes = self.call_or_reconnect(self.odm.list_nodes,
-                                            [nodename], 0,
-                                            self.empty_dict,
-                                            [dm_const.FLAG_EXTERNAL])
-        self._check_result(res)
-
-        if len(nodes) != 1:
-            msg = _('Expected exactly one node called "%s"') % nodename
+        if not linstor:
+            msg = _('Linstor not found')
             LOG.error(msg)
+
             raise exception.VolumeDriverException(message=msg)
 
-        __, nodeattr = nodes[0]
-
-        return getattr(nodeattr, dm_const.FLAG_EXTERNAL,
-                       dm_const.BOOL_FALSE) == dm_const.BOOL_TRUE
-
-    def _return_connection_data(self, nodename, volume, d_res_name=None):
-        if nodename and self._is_external_node(nodename):
-            return self._return_drbdadm_config(nodename,
-                                               volume,
-                                               d_res_name=d_res_name)
-        else:
-            return self._return_local_access(nodename, volume)
-
-    def create_export(self, context, volume, connector):
-        d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(volume)
-
-        nodename = connector["host"]
-
-        # Ensure the node is known to DRBDmanage.
-        # Note that this does *not* mean that DRBDmanage has to
-        # be installed on it!
-        # This is just so that DRBD allows the IP to connect.
-        node_prop = {
-            dm_const.NODE_ADDR: connector["ip"],
-            dm_const.FLAG_DRBDCTRL: dm_const.BOOL_FALSE,
-            dm_const.FLAG_STORAGE: dm_const.BOOL_FALSE,
-            dm_const.FLAG_EXTERNAL: dm_const.BOOL_TRUE,
-        }
-        res = self.call_or_reconnect(
-            self.odm.create_node, nodename, node_prop)
-        self._check_result(res, ignore=[dm_exc.DM_EEXIST])
-
-        # Ensure the data is accessible, by creating an assignment.
-        assg_prop = {
-            dm_const.FLAG_DISKLESS: dm_const.BOOL_TRUE,
-        }
-        # If we create the assignment here, it's temporary -
-        # and has to be removed later on again.
-        assg_prop.update(dm_utils.aux_props_to_dict({
-            AUX_PROP_TEMP_CLIENT: dm_const.BOOL_TRUE,
-        }))
-
-        res = self.call_or_reconnect(
-            self.odm.assign, nodename, d_res_name, assg_prop)
-        self._check_result(res, ignore=[dm_exc.DM_EEXIST])
-
-        # Wait for DRBDmanage to have completed that action.
-
-        # A DRBDmanage controlled node will set the cstate:deploy flag;
-        # an external node will not be available to change it, so we have
-        # to wait for the storage nodes to remove the upd_con flag
-        # (ie. they're now ready to receive the connection).
-        if self._is_external_node(nodename):
-            self._wait_for_node_assignment(
-                d_res_name, d_vol_nr, [],
-                check_vol_deployed=False,
-                filter_props={
-                    # must be deployed
-                    CS_DEPLOYED: dm_const.BOOL_TRUE,
-                    # must be a storage node (not diskless),
-                    CS_DISKLESS: dm_const.BOOL_FALSE,
-                    # connection must be available, no need for updating
-                    CS_UPD_CON: dm_const.BOOL_FALSE,
-                })
-        else:
-            self._wait_for_node_assignment(
-                d_res_name, d_vol_nr, [nodename],
-                check_vol_deployed=True,
-                filter_props={
-                    CS_DEPLOYED: dm_const.BOOL_TRUE,
-                })
-
-        return self._return_connection_data(nodename, volume)
-
-    def ensure_export(self, context, volume):
-        p_location = volume['provider_location']
-        if p_location:
-            fields = p_location.split(" ")
-            nodename = fields[1]
-        else:
-            nodename = None
-
-        return self._return_connection_data(nodename, volume)
+        LOG.debug('EXIT: check_for_setup_error @ DRBD')
 
     def initialize_connection(self, volume, connector):
 
-        nodename = connector["host"]
+        LOG.debug('ENTER: initialize_connection @ DRBD Base')
 
-        return self._return_connection_data(nodename, volume)
+        with linstor.Linstor(self.default_uri) as lin:
+            if not lin.connected:
+                lin.connect()
 
-    def terminate_connection(self, volume, connector,
-                             force=False, **kwargs):
-        d_res_name, d_vol_nr = self._resource_name_volnr_for_volume(
-            volume, empty_ok=True)
-        if not d_res_name:
-            return
+            LOG.debug('VOL: ' + str(volume))
+            LOG.debug('CON: ' + str(connector))
 
-        nodename = connector["host"]
+            rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
 
-        # If the DRBD volume is diskless on that node, we remove it;
-        # if it has local storage, we keep it.
-        res, data = self.call_or_reconnect(
-            self.odm.list_assignments,
-            [nodename], [d_res_name], 0,
-            self.empty_list, self.empty_list)
-        self._check_result(res, ignore=[dm_exc.DM_ENOENT])
 
-        if len(data) < 1:
-            # already removed?!
-            LOG.info('DRBD connection for %s already removed',
-                     volume['id'])
-        elif len(data) == 1:
-            __, __, props, __ = data[0]
-            my_props = dm_utils.dict_to_aux_props(props)
-            diskless = getattr(props,
-                               dm_const.FLAG_DISKLESS,
-                               dm_const.BOOL_FALSE)
-            temp_cli = getattr(my_props,
-                               AUX_PROP_TEMP_CLIENT,
-                               dm_const.BOOL_FALSE)
-            # If diskless assigned,
-            if ((diskless == dm_const.BOOL_TRUE) and
-                    (temp_cli == dm_const.BOOL_TRUE)):
-                # remove the assignment
+            LOG.debug('EXIT: initialize_connection @ DRBD Base')
 
-                # TODO(pm): does it make sense to relay "force" here?
-                #           What are the semantics?
+            return self._return_drbd_config(volume)
 
-                # TODO(pm): consistency groups shouldn't really
-                #           remove until *all* volumes are detached
+    def create_volume(self, volume):
 
-                res = self.call_or_reconnect(self.odm.unassign,
-                                             nodename, d_res_name, force)
-                self._check_result(res, ignore=[dm_exc.DM_ENOENT])
-        else:
-            # more than one assignment?
-            LOG.error("DRBDmanage: too many assignments returned.")
-        return
+        LOG.debug('ENTER: create_volume @ DRBD')
+        LOG.debug('  Display Name: '+volume['display_name'])
+        LOG.debug('  Host        : '+volume['host'])
+        LOG.debug('  Volume Size : '+str(volume['size']))
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            # Check Connection
+            if not lin.connected:
+                lin.connect()
+
+            # Check for Storage Pool List
+            sp_data = self._get_sp()
+
+            # Get default Storage Pool Definition
+            # spd_default = self.default_vg_name
+            rsc_size = volume['size'] if volume['size'] else self.default_rsc_size
+
+            # No existing Storage Pools found
+            if not sp_data:
+
+                # Check for Nodes
+                node_list = self._get_nodes()
+
+                if len(node_list) == 0:
+                    LOG.debug("Error: No resource nodes available")
+                    message = _('No resource nodes available / configured')
+                    raise exception.VolumeBackendAPIException(data=message)
+
+                # Create Storage Pool (definition is implicit)
+                spd_name = self._get_spd()[0]['spd_name']
+
+                for node in node_list:
+                    lin.storage_pool_create(
+                        node_name=node['node_name'],
+                        storage_pool_name=spd_name,
+                        storage_driver=LVM,
+                        driver_pool_name=self.default_vg_name)
+                    LOG.debug('Created Storage Pool for ' + spd_name + ' @ ' + node['node_name'] + ' in ' + self.default_vg_name)
+                # Move on
+            else:
+                LOG.debug("Found existing Storage Pools")
+                # Move on
+
+            LOG.debug('PROG: create_volume @ DRBD')
+
+            # Check Connection
+            if not lin.connected:
+                lin.connect()
+
+            # Check for RD
+            rd_list = lin.resource_dfn_list()
+            rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
+
+            # if len(str(rd_list[0])) == 0:
+
+            # Create a New RD
+            LOG.debug("No existing Resource Definition found.  Created a new one.")
+            rd_reply = lin.resource_dfn_create(rsc_name)  # Need error checking
+            self._debug_api_reply(rd_reply)
+
+            rd_list = lin.resource_dfn_list()
+            LOG.debug("Created RD: " + str(rd_list[0].proto_msg))
+
+            # Create a New VD
+            vd_reply = lin.volume_dfn_create(rsc_name=rsc_name,
+                 size=int(self.default_snap_factor*rsc_size*units.Gi / units.Ki))  # size in KiB
+            self._debug_api_reply(vd_reply)
+            LOG.debug("Created VD: " + str(vd_reply[0].proto_msg))
+
+            # LOG.debug(rd_list[0])
+
+            # Create RSC's
+            for node in sp_data:
+                rsc_reply = lin.resource_create(rsc_name=rsc_name, node_name=node['node_name'])
+                self._debug_api_reply(rsc_reply)
+
+        return {}
+
+    def delete_volume(self, volume):
+
+        LOG.debug('ENTER: delete_volume @ DRBD')
+        LOG.debug('  Display Name: '+volume['display_name'])
+        LOG.debug('  Host        : '+volume['host'])
+        LOG.debug('  Volume Size : '+str(volume['size']))
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            # Check Connection
+            if not lin.connected:
+                lin.connect()
+
+            drbd_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+            rsc_list_reply = lin.resource_list() #filter_by_resources=drbd_rsc_name)
+
+            LOG.debug('  Rsc Name: '+str(drbd_rsc_name))
+
+            if len(str(rsc_list_reply[0])) == 0:
+                LOG.debug("No RSCs to delete. Still success per Cinder doc.")
+
+            else:
+
+                # Delete Resources
+                for node in rsc_list_reply[0].proto_msg.resource_states:
+                    if node.rsc_name == drbd_rsc_name:
+                        # print(node)
+                        LOG.debug('Deleting ' + node.rsc_name + ' @ ' + node.node_name)
+
+                        rsc_reply = lin.resource_delete(node.node_name, drbd_rsc_name)
+                        self._debug_api_reply(rsc_reply)
+                        time.sleep(1)
+
+                # Delete VD
+                print('Deleting Volume Definition for ' + drbd_rsc_name)
+                vd_reply = lin.volume_dfn_delete(drbd_rsc_name, 0)  # Need work here for volume number
+                self._debug_api_reply(vd_reply)
+                time.sleep(1)
+
+                # Delete RD
+                print('Deleting Resource Definition for ' + drbd_rsc_name)
+                rd_reply = lin.resource_dfn_delete(drbd_rsc_name)
+                self._debug_api_reply(rd_reply)
+
+        LOG.debug('EXIT: delete_volume @ DRBD')
+
+        return True
+
+    def extend_volume(self, volume, new_size):
+
+        LOG.debug('ENTER: extend_volume @ DRBD')
+        LOG.debug('  New Size : ' + str(new_size))
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            # Check Connection
+            if not lin.connected:
+                lin.connect()
+
+            rsc_target_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
+
+            snap_reply = lin.volume_dfn_modify(
+                rsc_name=rsc_target_name,
+                volume_nr=0,
+                size=int(self.default_snap_factor * new_size * units.Gi / units.Ki))
+
+            if not self._debug_api_reply(snap_reply):
+                print("ERROR Linstor Volume Extend")
+
+        LOG.debug('EXIT: extend_volume @ DRBD')
+
+    def terminate_connection(self, volume, connector, **kwargs):
+
+        LOG.debug('ENTER: terminate_connection @ DRBD Base')
+
+        # TODO(wp) Find exactly where I should disconnect w/ Linstor
+        # try:
+        #     with linstor.Linstor(self.default_uri) as lin:
+        #         if lin.connected:
+        #             lin.disconnect()
+        #
+        # except Exception as e:
+        #     LOG.error(str(e))
+
+        LOG.debug('VOL: '+str(volume))
+        LOG.debug('CON: '+str(connector))
+
+        LOG.debug('EXIT: terminate_connection @ DRBD Base')
+
+    # TODO(wp)
+    def create_export(self, context, volume, connector):
+
+        LOG.debug('ENTER: create_export @ DRBD')
+        LOG.debug('VOL: '+str(volume))
+        LOG.debug('CON: '+str(connector))
+        LOG.debug('CTXT :'+str(context))
+        LOG.debug('EXIT: create_export @ DRBD')
+
+        return self._return_drbd_config(volume)
+
+    # TODO(wp)
+    def ensure_export(self, context, volume):
+
+        LOG.debug('ENTER: ensure_export @ DRBD')
+        LOG.debug('VOL :' + str(volume))
+        LOG.debug('CTXT :' + str(context))
+        LOG.debug('EXIT: ensure_export @ DRBD')
+
+        return self._return_drbd_config(volume)
 
     def remove_export(self, context, volume):
-        pass
+
+        LOG.debug('ENTER: remove_export @ DRBD')
+        LOG.debug('VOL: ' + str(volume))
+
+        # TODO(wp) Find exactly where I should disconnect w/ Linstor
+        # with linstor.Linstor(self.default_uri) as lin:
+        #     if lin.connected:
+        #         lin.disconnect()
+
+        LOG.debug('EXIT: remove_export @ DRBD')
+
+
