@@ -29,6 +29,7 @@ import socket
 import time
 import uuid
 import sys
+import math
 
 from oslo_concurrency import processutils
 from oslo_config import cfg
@@ -38,8 +39,9 @@ from oslo_utils import importutils
 from oslo_utils import units
 
 from cinder import exception
-from cinder.i18n import _
 from cinder import interface
+from cinder.i18n import _
+from cinder.image import image_utils
 from cinder.volume import configuration
 from cinder.volume import driver
 
@@ -83,12 +85,16 @@ linstor_opts = [
                help='Default Storage Pool name for Linstor.'),
 
     cfg.IntOpt('linstor_default_resource_size',
-               default=1024000,
-               help='Default resource size in Kibibytes.  1024000 = 1GiB'),
+               default=1,
+               help='Default resource size in GiB.  1049000 KiB = 1GiB'),
 
-    cfg.FloatOpt('linstor_snapshot_upscale_factor',
-               default=1.1,
-               help='Default Upscaling size factor for a Linstor snapshot.'),
+    cfg.FloatOpt('linstor_volume_downsize_factor',
+               default=4096,
+               help='Default volume downscale size in KiB = 4 MiB'),
+
+    cfg.IntOpt('linstor_default_blocksize',
+                 default=4096,
+                 help='Default Block size for Image restoration.'),
 
 ]
 LOG = logging.getLogger(__name__)
@@ -101,12 +107,13 @@ CINDER_UNKNOWN = 'unknown'
 DM_VN_PREFIX = 'CV_'
 DM_SN_PREFIX = 'SN_'
 LVM = 'Lvm'
+LVMTHIN = 'LvmThin'
 
 
 class LinstorBaseDriver(driver.BaseVD):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.0.3'
+    VERSION = '0.0.4'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -119,8 +126,9 @@ class LinstorBaseDriver(driver.BaseVD):
         self.default_pool = self.configuration.safe_get('linstor_default_storage_pool_name')
         self.default_uri = self.configuration.safe_get('linstor_default_uri')
         self.default_rsc_size = self.configuration.safe_get('linstor_default_resource_size')
-        self.default_snap_factor = self.configuration.safe_get('linstor_snapshot_upscale_factor')
+        self.default_downsize_factor = self.configuration.safe_get('linstor_volume_downsize_factor')
         self.default_vg_name = self.configuration.safe_get('linstor_default_volume_group_name')
+        self.default_blocksize = self.configuration.safe_get('linstor_default_blocksize')
 
         # LOG.debug('CONFIG URI: '+str(self.default_uri))
 
@@ -132,6 +140,14 @@ class LinstorBaseDriver(driver.BaseVD):
         id = id.replace("{", "")
         id = id.replace("}", "")
         return id
+
+    # LINSTOR works in kiB units; Cinder uses GiB.
+    def _vol_size_to_linstor(self, size):
+        # return int(size * 1049000)
+        return size * units.Gi / units.Ki - 4096    # TODO(wp) Allows proper image to volume restore w/o overflow
+
+    def _vol_size_to_cinder(self, size):
+        return size * units.Ki / units.Gi
 
     def _is_clean_volume_name(self, name, prefix):
         try:
@@ -175,11 +191,10 @@ class LinstorBaseDriver(driver.BaseVD):
                 lin.connect()
 
             # Fetch Storage Pool List
-            sp_list_reply = lin.storage_pool_list() # TODO(wp)-Maybe use lin.volume_list()
+            sp_list_reply = lin.storage_pool_list()
             assert len(str(sp_list_reply[0].proto_msg)), "Empty Storage Pool list"
 
             # Fetch Resource Definition List
-
             sp_list = []
             node_count = 0
             for node in sp_list_reply[0].proto_msg.stor_pools:
@@ -193,7 +208,6 @@ class LinstorBaseDriver(driver.BaseVD):
                     if "Vg" in prop.key:
                         sp_node['vg_name'] = prop.value
                     if "ThinPool" in prop.key:
-                        #LOG.debug(prop.value+" is a thinpool")
                         thin_pool = True
 
                 # Free Space
@@ -203,7 +217,7 @@ class LinstorBaseDriver(driver.BaseVD):
                 # 2. Trying to optimize below causes incorrect result.
                 #    ex. node.free_space.free_space * (units.Ki / units.Gi) is wrong for 2.7
                 if thin_pool:
-                    # TODO(wp) - Update w/ latest linstor-server release
+                    # TODO(wp) - Update w/ latest linstor-server release (from CINDER_UNKNOWN)
                     sp_node['sp_free'] = CINDER_UNKNOWN
                 else:
                     sp_node['sp_free'] = round(node.free_space.free_capacity / (units.Gi / units.Ki), 2)
@@ -211,6 +225,8 @@ class LinstorBaseDriver(driver.BaseVD):
                 # Driver
                 if node.driver == "LvmDriver":
                     sp_node['driver_name'] = LVM
+                elif node.driver == "LvmThinDriver":
+                    sp_node['driver_name'] = LVMTHIN
                 else:
                     sp_node['driver_name'] = node.driver
 
@@ -262,7 +278,6 @@ class LinstorBaseDriver(driver.BaseVD):
 
         return data
 
-    # TODO(wp) Placeholder for the moment
     def _get_local_path(self, volume):
         pass
 
@@ -290,7 +305,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
                     for vol in node.vlm_dfns:
                         if vol.vlm_nr == 0:
-                            rd_node['rd_size'] = round(float(vol.vlm_size) / units.Mi / self.default_snap_factor, 2)
+                            rd_node['rd_size'] = round(float(vol.vlm_size) / units.Mi, 2)
 
                     rd_list.append(rd_node)
 
@@ -424,7 +439,8 @@ class LinstorBaseDriver(driver.BaseVD):
                 snap_reply = lin.volume_dfn_modify(
                     rsc_name=upsize_target_name,
                     volume_nr=0,
-                    size=int(self.default_snap_factor * new_vol_size * units.Gi / units.Ki))
+                    # size=int(new_vol_size * units.Gi / units.Ki))
+                    size = self._vol_size_to_linstor(new_vol_size))
 
                 if not self._debug_api_reply(snap_reply):
                     print("ERROR Linstor Volume Extend")
@@ -490,7 +506,8 @@ class LinstorBaseDriver(driver.BaseVD):
                 snap_reply = lin.volume_dfn_modify(
                     rsc_name=upsize_target_name,
                     volume_nr=0,
-                    size=int(self.default_snap_factor * new_vol_size * units.Gi / units.Ki))
+                    # size=int(new_vol_size * units.Gi / units.Ki))
+                    size=self._vol_size_to_linstor(new_vol_size))
 
                 if not self._debug_api_reply(snap_reply):
                     print("VOL ERROR Linstor Volume Extend")
@@ -760,7 +777,6 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
             rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
 
-
             LOG.debug('EXIT: initialize_connection @ DRBD Base')
 
             return self._return_drbd_config(volume)
@@ -771,6 +787,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         LOG.debug('  Display Name: '+volume['display_name'])
         LOG.debug('  Host        : '+volume['host'])
         LOG.debug('  Volume Size : '+str(volume['size']))
+        LOG.debug('  VOL         : '+str(volume))
 
         with linstor.Linstor(self.default_uri) as lin:
 
@@ -803,7 +820,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                     lin.storage_pool_create(
                         node_name=node['node_name'],
                         storage_pool_name=spd_name,
-                        storage_driver=LVM,
+                        storage_driver=LVMTHIN,     # TODO(wp) Update this
                         driver_pool_name=self.default_vg_name)
                     LOG.debug('Created Storage Pool for ' + spd_name + ' @ ' + node['node_name'] + ' in ' + self.default_vg_name)
                 # Move on
@@ -819,7 +836,13 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
             # Check for RD
             rd_list = lin.resource_dfn_list()
-            rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
+
+            # If Retyping from another volume, use parent/origin uuid as a name source # TODO(wp) Fix w/ export
+            if volume['migration_status'] is not None and str(volume['migration_status']).find('success') == -1:
+                src_name = str(volume['migration_status']).split(':')[1]
+                rsc_name = self._is_clean_volume_name(str(src_name), DM_VN_PREFIX)
+            else:
+                rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
 
             # if len(str(rd_list[0])) == 0:
 
@@ -832,8 +855,12 @@ class LinstorDrbdDriver(LinstorBaseDriver):
             LOG.debug("Created RD: " + str(rd_list[0].proto_msg))
 
             # Create a New VD
-            vd_reply = lin.volume_dfn_create(rsc_name=rsc_name,
-                 size=int(self.default_snap_factor*rsc_size*units.Gi / units.Ki))  # size in KiB
+            vd_size = self._vol_size_to_linstor(rsc_size)
+            LOG.debug("VOL VD Size: "+str(vd_size))
+
+            vd_reply = lin.volume_dfn_create(rsc_name=rsc_name, size = vd_size)
+                # size=int(rsc_size*units.Gi / units.Ki))  # size in KiB
+
             self._debug_api_reply(vd_reply)
             LOG.debug("Created VD: " + str(vd_reply[0].proto_msg))
 
@@ -910,8 +937,8 @@ class LinstorDrbdDriver(LinstorBaseDriver):
             snap_reply = lin.volume_dfn_modify(
                 rsc_name=rsc_target_name,
                 volume_nr=0,
-                size=int(self.default_snap_factor * new_size * units.Gi / units.Ki))
-
+                # size=int(new_size * units.Gi / units.Ki))
+                size = self._vol_size_to_linstor(new_size))
             if not self._debug_api_reply(snap_reply):
                 print("ERROR Linstor Volume Extend")
 
@@ -958,7 +985,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
         LOG.debug('EXIT: remove_export @ DRBD')
 
-    # TODO(wp)
+    # TODO(wp): Needs proper resizing
     def copy_image_to_volume(self, context, volume, image_service, image_id):
 
         LOG.debug('ENTER: copy_image_to_volume @ DRBD')
@@ -966,17 +993,35 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         LOG.debug('VOL IMG SVC :' + str(image_service))
         LOG.debug('VOL IMG ID :' + str(image_id))
 
-        # self.create_volume(volume)
+        # self.create_volume(volume) # Already called by Cinder, and works.  Need to check return vals
+        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+
+        # This creates a LINSTOR volume at the original size.
+        image_utils.fetch_to_raw(context,
+                                 image_service,
+                                 image_id,
+                                 str(self._get_rsc_path(full_rsc_name)),
+                                 self.default_blocksize,
+                                 size=volume['size'])
+
+        # Need proper resizing of the original LINSTOR volume to the current volume size
 
         LOG.debug('EXIT: copy_image_to_volume @ DRBD')
-        pass
+        return {}
 
-    # TODO(wp)
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
         LOG.debug('ENTER: copy_volume_to_image @ DRBD')
         LOG.debug('VOL :' + str(volume))
         LOG.debug('VOL IMG SVC :' + str(image_service))
         LOG.debug('VOL IMG META :' + str(image_meta))
+
+        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+
+        image_utils.upload_volume(context,
+                                  image_service,
+                                  image_meta,
+                                  str(self._get_rsc_path(full_rsc_name)))
+
         LOG.debug('EXIT: copy_volume_to_image @ DRBD')
 
-        pass
+        return {}
