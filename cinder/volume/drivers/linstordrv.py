@@ -676,8 +676,9 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
         LOG.debug('ENTER: _get_local_path @ DRBD')
 
+        host_name = socket.gethostname()
         for volume in volumes:
-            if volume['node_name'] == socket.gethostname():
+            if volume['node_name'] == host_name:
 
                 LOG.debug("EXIT: _get_local_path @ DRBD")
                 return volume['volume'][0].device_path
@@ -689,7 +690,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
         with linstor.Linstor(self.default_uri) as lin:
             rsc_list_reply = lin.resource_list()
-            host_name = str(socket.gethostname())
+            host_name = socket.gethostname()
 
             for rsc in rsc_list_reply[0].proto_msg.resources:
                 if rsc.name == rsc_name and rsc.node_name == host_name:
