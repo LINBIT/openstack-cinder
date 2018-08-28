@@ -31,10 +31,10 @@ import uuid
 # import sys
 # import math
 
-from oslo_concurrency import processutils
+# from oslo_concurrency import processutils
 from oslo_config import cfg
 from oslo_log import log as logging
-from oslo_utils import excutils
+# from oslo_utils import excutils
 from oslo_utils import importutils
 from oslo_utils import units
 
@@ -282,7 +282,18 @@ class LinstorBaseDriver(driver.BaseVD):
         return data
 
     def _get_local_path(self, volumes):
-        pass
+
+        LOG.debug('ENTER: _get_local_path @ DRBD BASE')
+
+        host_name = socket.gethostname()
+        for volume in volumes:
+            if volume['node_name'] == host_name:
+
+                LOG.debug("EXIT: _get_local_path @ DRBD BASE")
+                return volume['volume'][0].device_path
+
+        message = _('Local Volume not found.')
+        raise exception.VolumeBackendAPIException(data=message)
 
     def _get_resource_definitions(self):
 
@@ -556,8 +567,9 @@ class LinstorIscsiDriver(LinstorBaseDriver):
 
     def __init__(self, *args, **kwargs):
         super(LinstorIscsiDriver, self).__init__(*args, **kwargs)
+
         target_driver = self.target_mapping[
-            self.configuration.safe_get('target_helper')]
+            self.configuration.safe_get('iscsi_helper')]  # target_helper
 
         LOG.info('START: Linstor iSCSI driver')
 
@@ -580,24 +592,22 @@ class LinstorIscsiDriver(LinstorBaseDriver):
 
     # TODO(wp)
     def ensure_export(self, context, volume):
-        # volume_path = self.local_path(volume)
-        # return self.target_driver.ensure_export(
-        #     context,
-        #     volume,
-        #     volume_path)
-        pass
+        volume_path = self._get_local_path(volume)
+        return self.target_driver.ensure_export(
+            context,
+            volume,
+            volume_path)
 
     # TODO(wp)
     def create_export(self, context, volume, connector):
-        # volume_path = self.local_path(volume)
-        # export_info = self.target_driver.create_export(
-        #     context,
-        #     volume,
-        #     volume_path)
-        #
-        # return {'provider_location': export_info['location'],
-        #         'provider_auth': export_info['auth'], }
-        pass
+        volume_path = self._get_local_path(volume)
+        export_info = self.target_driver.create_export(
+            context,
+            volume,
+            volume_path)
+
+        return {'provider_location': export_info['location'],
+                'provider_auth': export_info['auth'], }
 
     def remove_export(self, context, volume):
         return self.target_driver.remove_export(context, volume)
@@ -709,19 +719,19 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                     LOG.debug("EXIT clean: _get_vol @ DRBD")
                 return vol_list
 
-    def _get_local_path(self, volumes):
-
-        LOG.debug('ENTER: _get_local_path @ DRBD')
-
-        host_name = socket.gethostname()
-        for volume in volumes:
-            if volume['node_name'] == host_name:
-
-                LOG.debug("EXIT: _get_local_path @ DRBD")
-                return volume['volume'][0].device_path
-
-        message = _('Local Volume not found.')
-        raise exception.VolumeBackendAPIException(data=message)
+    # def _get_local_path(self, volumes):
+        #
+        # LOG.debug('ENTER: _get_local_path @ DRBD')
+        #
+        # host_name = socket.gethostname()
+        # for volume in volumes:
+        #     if volume['node_name'] == host_name:
+        #
+        #         LOG.debug("EXIT: _get_local_path @ DRBD")
+        #         return volume['volume'][0].device_path
+        #
+        # message = _('Local Volume not found.')
+        # raise exception.VolumeBackendAPIException(data=message)
 
     def _get_rsc_path(self, rsc_name):
 
@@ -857,7 +867,8 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                 lin.connect()
 
             # Check for RD
-            rd_list = lin.resource_dfn_list()
+            # rd_list = lin.resource_dfn_list()
+            lin.resource_dfn_list()
 
             # If Retyping from another volume, use parent/origin uuid
             # as a name source
