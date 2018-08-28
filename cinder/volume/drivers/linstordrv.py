@@ -87,8 +87,8 @@ linstor_opts = [
                help='Default resource size in Kibibytes.  1024000 = 1GiB'),
 
     cfg.FloatOpt('linstor_snapshot_upscale_factor',
-               default=1.1,
-               help='Default Upscaling size factor for a Linstor snapshot.'),
+                 default=1.1,
+                 help='Default Upscaling size factor for a Linstor snapshot.'),
 
 ]
 LOG = logging.getLogger(__name__)
@@ -149,7 +149,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
     def _snapshot_name_from_cinder_snapshot(self, snapshot):
         sn_name = self._is_clean_volume_name(snapshot['id'], DM_SN_PREFIX)
-        LOG.debug('SNAP NAME: '+str(sn_name))
+        LOG.debug('SNAP NAME: ' + str(sn_name))
         return sn_name
 
     def _cinder_volume_name_from_drbd_resource(self, rsc_name):
@@ -175,7 +175,7 @@ class LinstorBaseDriver(driver.BaseVD):
                 lin.connect()
 
             # Fetch Storage Pool List
-            sp_list_reply = lin.storage_pool_list() # TODO(wp)-Maybe use lin.volume_list()
+            sp_list_reply = lin.storage_pool_list()  # TODO(wp)-Maybe use lin.volume_list()
             assert len(str(sp_list_reply[0].proto_msg)), "Empty Storage Pool list"
 
             # Fetch Resource Definition List
@@ -193,7 +193,7 @@ class LinstorBaseDriver(driver.BaseVD):
                     if "Vg" in prop.key:
                         sp_node['vg_name'] = prop.value
                     if "ThinPool" in prop.key:
-                        #LOG.debug(prop.value+" is a thinpool")
+                        # LOG.debug(prop.value+" is a thinpool")
                         thin_pool = True
 
                 # Free Space
@@ -238,14 +238,14 @@ class LinstorBaseDriver(driver.BaseVD):
         num_vols = 0
         total_capacity_gb = 0
         for rd in rd_list:
-            LOG.debug("VOL RD"+str(rd))
+            LOG.debug("VOL RD" + str(rd))
             num_vols += 1
             if 'rd_size' in rd:
                 total_capacity_gb += rd['rd_size']
 
         # LOG.debug('VOL SP:'+str(sp_data[0]["sp_free"]))
 
-        location_info = 'LinstorDrbdDriver:'+self.default_uri
+        location_info = 'LinstorDrbdDriver:' + self.default_uri
 
         single_pool = {}
         single_pool["pool_name"] = data["volume_backend_name"]
@@ -326,7 +326,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
     def _debug_api_reply(self, api_response):
         for response in api_response:
-            LOG.debug("API: "+str(response))
+            LOG.debug("API: " + str(response))
 
         return linstor.Linstor.all_api_responses_success(api_response)
 
@@ -441,7 +441,7 @@ class LinstorBaseDriver(driver.BaseVD):
         src_snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
 
         # new_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
-        #src_src_name should match new_rsc_name
+        # src_src_name should match new_rsc_name
 
         with linstor.Linstor(self.default_uri) as lin:
 
@@ -496,6 +496,7 @@ class LinstorBaseDriver(driver.BaseVD):
                     print("VOL ERROR Linstor Volume Extend")
 
         LOG.debug('EXIT: revert_to_snapshot @ DRBD Base')
+
     #
     # Volume
     #
@@ -696,7 +697,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                 if rsc.name == rsc_name and rsc.node_name == host_name:
                     for volume in rsc.vlms:
                         if volume.vlm_nr == 0:
-                            LOG.debug('RSC PATH: '+str(volume.device_path))
+                            LOG.debug('RSC PATH: ' + str(volume.device_path))
                             return volume.device_path
 
     def _return_drbd_config(self, volume):
@@ -761,7 +762,6 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
             rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
 
-
             LOG.debug('EXIT: initialize_connection @ DRBD Base')
 
             return self._return_drbd_config(volume)
@@ -769,9 +769,9 @@ class LinstorDrbdDriver(LinstorBaseDriver):
     def create_volume(self, volume):
 
         LOG.debug('ENTER: create_volume @ DRBD')
-        LOG.debug('  Display Name: '+volume['display_name'])
-        LOG.debug('  Host        : '+volume['host'])
-        LOG.debug('  Volume Size : '+str(volume['size']))
+        LOG.debug('  Display Name: ' + volume['display_name'])
+        LOG.debug('  Host        : ' + volume['host'])
+        LOG.debug('  Volume Size : ' + str(volume['size']))
 
         with linstor.Linstor(self.default_uri) as lin:
 
@@ -833,8 +833,9 @@ class LinstorDrbdDriver(LinstorBaseDriver):
             LOG.debug("Created RD: " + str(rd_list[0].proto_msg))
 
             # Create a New VD
+            # size in KiB
             vd_reply = lin.volume_dfn_create(rsc_name=rsc_name,
-                 size=int(self.default_snap_factor*rsc_size*units.Gi / units.Ki))  # size in KiB
+                                             size=int(self.default_snap_factor * rsc_size * units.Gi / units.Ki))
             self._debug_api_reply(vd_reply)
             LOG.debug("Created VD: " + str(vd_reply[0].proto_msg))
 
@@ -850,9 +851,9 @@ class LinstorDrbdDriver(LinstorBaseDriver):
     def delete_volume(self, volume):
 
         LOG.debug('ENTER: delete_volume @ DRBD')
-        LOG.debug('  Display Name: '+volume['display_name'])
-        LOG.debug('  Host        : '+volume['host'])
-        LOG.debug('  Volume Size : '+str(volume['size']))
+        LOG.debug('  Display Name: ' + volume['display_name'])
+        LOG.debug('  Host        : ' + volume['host'])
+        LOG.debug('  Volume Size : ' + str(volume['size']))
 
         with linstor.Linstor(self.default_uri) as lin:
 
@@ -861,9 +862,9 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                 lin.connect()
 
             drbd_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
-            rsc_list_reply = lin.resource_list() #filter_by_resources=drbd_rsc_name)
+            rsc_list_reply = lin.resource_list()  # filter_by_resources=drbd_rsc_name)
 
-            LOG.debug('  Rsc Name: '+str(drbd_rsc_name))
+            LOG.debug('  Rsc Name: ' + str(drbd_rsc_name))
 
             if len(str(rsc_list_reply[0])) == 0:
                 LOG.debug("No RSCs to delete. Still success per Cinder doc.")
@@ -888,7 +889,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
                 # Delete RD
                 print('Deleting Resource Definition for ' + drbd_rsc_name)
-                rd_reply = lin.resource_dfn_delete(drbd_rsc_name) # Will fail if snap exists
+                rd_reply = lin.resource_dfn_delete(drbd_rsc_name)  # Will fail if snap exists
                 self._debug_api_reply(rd_reply)
 
         LOG.debug('EXIT: delete_volume @ DRBD')
@@ -922,17 +923,17 @@ class LinstorDrbdDriver(LinstorBaseDriver):
     def terminate_connection(self, volume, connector, **kwargs):
 
         LOG.debug('ENTER: terminate_connection @ DRBD Base')
-        LOG.debug('VOL: '+str(volume))
-        LOG.debug('CON: '+str(connector))
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CON: ' + str(connector))
         LOG.debug('EXIT: terminate_connection @ DRBD Base')
 
     # TODO(wp) Not sure if necessary
     def create_export(self, context, volume, connector):
 
         LOG.debug('ENTER: create_export @ DRBD')
-        LOG.debug('VOL: '+str(volume))
-        LOG.debug('CON: '+str(connector))
-        LOG.debug('CTXT :'+str(context))
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CON: ' + str(connector))
+        LOG.debug('CTXT :' + str(context))
         LOG.debug('EXIT: create_export @ DRBD')
 
         return self._return_drbd_config(volume)
