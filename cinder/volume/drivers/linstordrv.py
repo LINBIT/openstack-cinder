@@ -16,7 +16,7 @@
 
 """
 
-This driver connects Cinder to an installed Linstor instance, see
+This driver connects Cinder to an installed LINSTOR instance, see
 https://docs.linbit.com/docs/users-guide-9.0/#ch-openstack
 for more details.
 
@@ -24,10 +24,10 @@ for more details.
 
 # from eventlet import greenthread
 # import json
-import six
 import socket
 import time
 import uuid
+# import six
 # import sys
 # import math
 
@@ -78,7 +78,7 @@ linstor_opts = [
 
     cfg.StrOpt('linstor_default_uri',
                default='linstor://localhost',
-               help='Default storate URI for LINSTOR.'),
+               help='Default storage URI for LINSTOR.'),
 
     cfg.StrOpt('linstor_default_storage_pool_name',
                default='DfltStorPool',
@@ -183,6 +183,8 @@ class LinstorBaseDriver(driver.BaseVD):
 
         LOG.debug("ENTER: _get_sp @ DRBD")
 
+        thin_pool = False
+
         with linstor.Linstor(self.default_uri) as lin:
 
             if not lin.connected:
@@ -206,7 +208,7 @@ class LinstorBaseDriver(driver.BaseVD):
                     if "Vg" in prop.key:
                         sp_node['vg_name'] = prop.value
                     if "ThinPool" in prop.key:
-                        # LOG.debug(prop.value+" is a thinpool")
+                        # LOG.debug(prop.value+" is a Thin Pool")
                         thin_pool = True
 
                 # Free Space
@@ -279,7 +281,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
         return data
 
-    def _get_local_path(self, volume):
+    def _get_local_path(self, volumes):
         pass
 
     def _get_resource_definitions(self):
@@ -448,7 +450,7 @@ class LinstorBaseDriver(driver.BaseVD):
                     rsc_name=upsize_target_name,
                     volume_nr=0,
                     # size=int(new_vol_size * units.Gi / units.Ki))
-                    size = self._vol_size_to_linstor(new_vol_size))
+                    size=self._vol_size_to_linstor(new_vol_size))
 
                 if not self._debug_api_reply(snap_reply):
                     print("ERROR Linstor Volume Extend")
@@ -542,7 +544,7 @@ class LinstorBaseDriver(driver.BaseVD):
                               'volume_id': src_vref['id']})
 
         snapshot['volume_size'] = src_vref['size']
-        self._create_volume_from_snapshot(volume, snapshot)
+        self.create_volume_from_snapshot(volume, snapshot)
 
         self.delete_snapshot(snapshot)
 
@@ -848,7 +850,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                 LOG.debug("Found existing Storage Pools")
                 # Move on
 
-            LOG.debug('PROG: create_volume @ DRBD')
+            LOG.debug('VOL PROG: create_volume @ DRBD')
 
             # Check Connection
             if not lin.connected:
@@ -885,7 +887,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
             LOG.debug("VOL VD Size: " + str(vd_size))
 
             vd_reply = lin.volume_dfn_create(rsc_name=rsc_name,
-                                             size = int(vd_size))
+                                             size=int(vd_size))
             # size=int(rsc_size*units.Gi / units.Ki))  # size in KiB
 
             self._debug_api_reply(vd_reply)
@@ -893,7 +895,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
             # LOG.debug(rd_list[0])
 
-            # Create RSC's
+            # Create LINSTOR Resources
             for node in sp_data:
                 rsc_reply = lin.resource_create(rsc_name=rsc_name,
                                                 node_name=node['node_name'])
@@ -970,7 +972,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                 rsc_name=rsc_target_name,
                 volume_nr=0,
                 # size=int(new_size * units.Gi / units.Ki))
-                size = self._vol_size_to_linstor(new_size))
+                size=self._vol_size_to_linstor(new_size))
             if not self._debug_api_reply(snap_reply):
                 print("ERROR Linstor Volume Extend")
 
@@ -1028,7 +1030,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         LOG.debug('VOL IMG ID :' + str(image_id))
 
         # self.create_volume(volume) already called by Cinder, and works.
-        # Need to check return vals
+        # Need to check return values
         full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
 
         # This creates a LINSTOR volume at the original size.
