@@ -95,6 +95,10 @@ linstor_opts = [
     cfg.IntOpt('linstor_default_blocksize',
                default=4096,
                help='Default Block size for Image restoration.'),
+
+    cfg.StrOpt('iscsi_helper',
+               default='tgtadm', # possibly lioadm as well
+               help='Default iSCSI back-end helper')
 ]
 
 LOG = logging.getLogger(__name__)
@@ -112,7 +116,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.BaseVD):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.0.4'
+    VERSION = '0.0.5'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -179,6 +183,57 @@ class LinstorBaseDriver(driver.BaseVD):
         drbd_resource_name = DM_VN_PREFIX + str(volume['id'])
         return drbd_resource_name
 
+    def _get_rsc_path(self, rsc_name):
+
+        with linstor.Linstor(self.default_uri) as lin:
+            rsc_list_reply = lin.resource_list()
+            host_name = socket.gethostname()
+
+            for rsc in rsc_list_reply[0].proto_msg.resources:
+                if rsc.name == rsc_name and rsc.node_name == host_name:
+                    for volume in rsc.vlms:
+                        if volume.vlm_nr == 0:
+                            LOG.debug('RSC PATH: ' + str(volume.device_path))
+                            return volume.device_path
+
+    def _get_local_path(self, volume):
+
+        LOG.debug('ENTER: _get_local_path @ DRBD BASE')
+        LOG.debug('LOCAL PATH VOL: '+str(volume))
+
+        try:
+            full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+
+            return self._get_rsc_path(full_rsc_name)
+
+        except Exception as e:
+            message = _('Local Volume not found.')
+            raise exception.VolumeBackendAPIException(data=message)
+
+    def _get_spd(self):
+
+        LOG.debug("ENTER: _get_spd @ DRBD")
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            if not lin.connected:
+                lin.connect()
+
+            # Storage Pool Definition List
+            spd_list_reply = lin.storage_pool_dfn_list()
+            assert len(str(spd_list_reply[0])), "Empty Storage Pool Definition list"
+
+            node_list = spd_list_reply[0]
+            spd_list = []
+            for node in node_list.proto_msg.stor_pool_dfns:
+                spd_item = {}
+                spd_item['spd_uuid'] = node.uuid
+                spd_item['spd_name'] = node.stor_pool_name
+                spd_list.append(spd_item)
+
+            LOG.debug("EXIT: _get_spd @ DRBD")
+            return spd_list
+
     def _get_storage_pool(self):
 
         LOG.debug("ENTER: _get_sp @ DRBD")
@@ -242,6 +297,37 @@ class LinstorBaseDriver(driver.BaseVD):
             LOG.debug("EXIT: _get_sp @ DRBD")
             return sp_list
 
+    def _get_vol(self):
+
+        """
+        Local Path = node['volume'][0].device_path+'@'+node['node_name']
+        """
+
+        LOG.debug("ENTER: _get_vol @ DRBD")
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            if not lin.connected:
+                lin.connect()
+
+            vol_list_reply = lin.volume_list()
+
+            if len(str(vol_list_reply[0])) == 0:
+                LOG.debug("EXIT empty: _get_vol @ DRBD")
+                return []
+            else:
+                vol_list = []
+                for volume in vol_list_reply[0].proto_msg.resources:
+                    # print(volume)
+                    vol_node = {}
+                    vol_node['node_name'] = volume.node_name
+                    vol_node['rd_name'] = volume.name
+                    vol_node['volume'] = volume.vlms
+                    vol_list.append(vol_node)
+
+                    LOG.debug("EXIT clean: _get_vol @ DRBD")
+                return vol_list
+
     def _get_volume_stats(self):
 
         data = {}
@@ -280,20 +366,6 @@ class LinstorBaseDriver(driver.BaseVD):
         data["pools"].append(single_pool)
 
         return data
-
-    def _get_local_path(self, volumes):
-
-        LOG.debug('ENTER: _get_local_path @ DRBD BASE')
-
-        host_name = socket.gethostname()
-        for volume in volumes:
-            if volume['node_name'] == host_name:
-
-                LOG.debug("EXIT: _get_local_path @ DRBD BASE")
-                return volume['volume'][0].device_path
-
-        message = _('Local Volume not found.')
-        raise exception.VolumeBackendAPIException(data=message)
 
     def _get_resource_definitions(self):
 
@@ -354,6 +426,36 @@ class LinstorBaseDriver(driver.BaseVD):
 
             return node_list
 
+    def _get_nodes(self):
+
+        LOG.debug("ENTER: _get_nodes @ DRBD")
+
+        with linstor.Linstor(self.default_uri) as lin:
+
+            if not lin.connected:
+                lin.connect()
+
+            # Get Node List
+            node_list_reply = lin.node_list()
+            assert node_list_reply, "Empty response"
+
+            node_list = []
+            if len(str(node_list_reply[0])) == 0:
+                LOG.debug("No LINSTOR nodes found on the network.")
+
+            else:
+                for node in node_list_reply[0].proto_msg.nodes:
+                    # LOG.info('NODE: '+node.name+' = '+node.uuid+' = '+
+                    #          node.net_interfaces[0].address+'\n')
+                    node_item = {}
+                    node_item['node_name'] = node.name
+                    node_item['node_uuid'] = node.uuid
+                    node_item['node_address'] = node.net_interfaces[0].address
+                    node_list.append(node_item)
+
+            LOG.debug("EXIT: _get_nodes @ DRBD")
+            return node_list
+
     def _debug_api_reply(self, api_response):
         for response in api_response:
             LOG.debug("API: " + str(response))
@@ -405,6 +507,8 @@ class LinstorBaseDriver(driver.BaseVD):
 
             # Delete RD if no other RSC are found
             if len(self._get_resource_nodes(drbd_rsc_name)) == 0:
+
+                time.sleep(1)
                 rd_reply = lin.resource_dfn_delete(drbd_rsc_name)
 
                 self._debug_api_reply(rd_reply)
@@ -546,272 +650,6 @@ class LinstorBaseDriver(driver.BaseVD):
     #
     # Volume
     #
-    # TODO (wp) Test
-    def create_cloned_volume(self, volume, src_vref):
-        temp_id = self._clean_uuid()
-        snapshot = {'id': temp_id}
-
-        self.create_snapshot({'id': temp_id,
-                              'volume_id': src_vref['id']})
-
-        snapshot['volume_size'] = src_vref['size']
-        self.create_volume_from_snapshot(volume, snapshot)
-
-        self.delete_snapshot(snapshot)
-
-
-# Class with iSCSI interface methods
-@interface.volumedriver
-class LinstorIscsiDriver(LinstorBaseDriver):
-    """Cinder iSCSI driver that uses Linstor for storage."""
-
-    def __init__(self, *args, **kwargs):
-        super(LinstorIscsiDriver, self).__init__(*args, **kwargs)
-
-        target_driver = self.target_mapping[
-            self.configuration.safe_get('iscsi_helper')]  # target_helper
-
-        LOG.info('START: Linstor iSCSI driver')
-
-        self.target_driver = importutils.import_object(
-            target_driver,
-            configuration=self.configuration,
-            db=self.db,
-            executor=self._execute)
-
-    def get_volume_stats(self, refresh=False):
-
-        LOG.debug('ENTER: get_volume_stats @ iSCSI')
-
-        data = self._get_volume_stats()
-        data["storage_protocol"] = 'iSCSI'
-
-        LOG.debug('EXIT: get_volume_stats @ iSCSI')
-
-        return data
-
-    # TODO(wp)
-    def ensure_export(self, context, volume):
-        volume_path = self._get_local_path(volume)
-        return self.target_driver.ensure_export(
-            context,
-            volume,
-            volume_path)
-
-    # TODO(wp)
-    def create_export(self, context, volume, connector):
-        volume_path = self._get_local_path(volume)
-        export_info = self.target_driver.create_export(
-            context,
-            volume,
-            volume_path)
-
-        return {'provider_location': export_info['location'],
-                'provider_auth': export_info['auth'], }
-
-    def remove_export(self, context, volume):
-        return self.target_driver.remove_export(context, volume)
-
-    def initialize_connection(self, volume, connector):
-        return self.target_driver.initialize_connection(volume, connector)
-
-    def validate_connector(self, connector):
-        return self.target_driver.validate_connector(connector)
-
-    def terminate_connection(self, volume, connector, **kwargs):
-        return self.target_driver.terminate_connection(volume,
-                                                       connector,
-                                                       **kwargs)
-
-
-# Class with DRBD transport mode
-@interface.volumedriver
-class LinstorDrbdDriver(LinstorBaseDriver):
-    """Cinder DRBD driver that uses Linstor for storage."""
-
-    def __init__(self, *args, **kwargs):
-        LOG.debug('START: Linstor DRBD driver')
-
-        super(LinstorDrbdDriver, self).__init__(*args, **kwargs)
-
-    def _get_nodes(self):
-
-        LOG.debug("ENTER: _get_nodes @ DRBD")
-
-        with linstor.Linstor(self.default_uri) as lin:
-
-            if not lin.connected:
-                lin.connect()
-
-            # Get Node List
-            node_list_reply = lin.node_list()
-            assert node_list_reply, "Empty response"
-
-            node_list = []
-            if len(str(node_list_reply[0])) == 0:
-                LOG.debug("No LINSTOR nodes found on the network.")
-            else:
-
-                for node in node_list_reply[0].proto_msg.nodes:
-                    # LOG.info('NODE: '+node.name+' = '+node.uuid+' = '+
-                    #          node.net_interfaces[0].address+'\n')
-                    node_item = {}
-                    node_item['node_name'] = node.name
-                    node_item['node_uuid'] = node.uuid
-                    node_item['node_address'] = node.net_interfaces[0].address
-                    node_list.append(node_item)
-
-            LOG.debug("EXIT: _get_nodes @ DRBD")
-            return node_list
-
-    def _get_spd(self):
-
-        LOG.debug("ENTER: _get_spd @ DRBD")
-
-        with linstor.Linstor(self.default_uri) as lin:
-
-            if not lin.connected:
-                lin.connect()
-
-            # Storage Pool Definition List
-            spd_list_reply = lin.storage_pool_dfn_list()
-            assert len(str(spd_list_reply[0])), "Empty Storage Pool Definition list"
-
-            node_list = spd_list_reply[0]
-            spd_list = []
-            for node in node_list.proto_msg.stor_pool_dfns:
-                spd_item = {}
-                spd_item['spd_uuid'] = node.uuid
-                spd_item['spd_name'] = node.stor_pool_name
-                spd_list.append(spd_item)
-
-            LOG.debug("EXIT: _get_spd @ DRBD")
-            return spd_list
-
-    def _get_vol(self):
-
-        """
-        Local Path = node['volume'][0].device_path+'@'+node['node_name']
-        """
-
-        LOG.debug("ENTER: _get_vol @ DRBD")
-
-        with linstor.Linstor(self.default_uri) as lin:
-
-            if not lin.connected:
-                lin.connect()
-
-            vol_list_reply = lin.volume_list()
-
-            if len(str(vol_list_reply[0])) == 0:
-                LOG.debug("EXIT empty: _get_vol @ DRBD")
-                return []
-            else:
-                vol_list = []
-                for volume in vol_list_reply[0].proto_msg.resources:
-                    # print(volume)
-                    vol_node = {}
-                    vol_node['node_name'] = volume.node_name
-                    vol_node['rd_name'] = volume.name
-                    vol_node['volume'] = volume.vlms
-                    vol_list.append(vol_node)
-
-                    LOG.debug("EXIT clean: _get_vol @ DRBD")
-                return vol_list
-
-    # def _get_local_path(self, volumes):
-        #
-        # LOG.debug('ENTER: _get_local_path @ DRBD')
-        #
-        # host_name = socket.gethostname()
-        # for volume in volumes:
-        #     if volume['node_name'] == host_name:
-        #
-        #         LOG.debug("EXIT: _get_local_path @ DRBD")
-        #         return volume['volume'][0].device_path
-        #
-        # message = _('Local Volume not found.')
-        # raise exception.VolumeBackendAPIException(data=message)
-
-    def _get_rsc_path(self, rsc_name):
-
-        with linstor.Linstor(self.default_uri) as lin:
-            rsc_list_reply = lin.resource_list()
-            host_name = socket.gethostname()
-
-            for rsc in rsc_list_reply[0].proto_msg.resources:
-                if rsc.name == rsc_name and rsc.node_name == host_name:
-                    for volume in rsc.vlms:
-                        if volume.vlm_nr == 0:
-                            LOG.debug('RSC PATH: ' + str(volume.device_path))
-                            return volume.device_path
-
-    def _return_drbd_config(self, volume):
-
-        LOG.debug('ENTER-EXIT: _return_drbd_config @ DRBD')
-        LOG.debug('VOL ID: ' + str(volume['id']))
-
-        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
-
-        return {
-            'driver_volume_type': 'local',
-            'data': {
-                "device_path": str(self._get_rsc_path(full_rsc_name))
-            }
-        }
-
-        # return {
-        #     'driver_volume_type': 'drbd',
-        #     'data': {
-        #         'provider_location': "drbd provider",
-        #         'device': "drbd device path",
-        #         'devices': ["dev/one", "dev/two"],
-        #         # 'provider_auth': subst_data['shared-secret'],
-        #         # 'config': config,
-        #         'name': "drbd rsc one"
-        #     }
-        # }
-
-    def get_volume_stats(self, refresh=False):
-
-        LOG.debug('ENTER: get_volume_stats @ DRBD')
-
-        data = self._get_volume_stats()
-        data["storage_protocol"] = 'DRBD'
-
-        LOG.debug('EXIT: get_volume_stats @ DRBD')
-
-        return data
-
-    def check_for_setup_error(self):
-
-        LOG.debug('ENTER: check_for_setup_error @ DRBD')
-
-        if not linstor:
-            msg = _('Linstor not found')
-            LOG.error(msg)
-
-            raise exception.VolumeDriverException(message=msg)
-
-        LOG.debug('EXIT: check_for_setup_error @ DRBD')
-
-    def initialize_connection(self, volume, connector):
-
-        LOG.debug('ENTER: initialize_connection @ DRBD Base')
-
-        with linstor.Linstor(self.default_uri) as lin:
-            if not lin.connected:
-                lin.connect()
-
-            LOG.debug('VOL: ' + str(volume))
-            LOG.debug('CON: ' + str(connector))
-
-            # rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
-
-            LOG.debug('EXIT: initialize_connection @ DRBD Base')
-
-            return self._return_drbd_config(volume)
-
     def create_volume(self, volume):
 
         LOG.debug('ENTER: create_volume @ DRBD')
@@ -989,6 +827,266 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
         LOG.debug('EXIT: extend_volume @ DRBD')
 
+    # TODO (wp) Test
+    def create_cloned_volume(self, volume, src_vref):
+        temp_id = self._clean_uuid()
+        snapshot = {'id': temp_id}
+
+        self.create_snapshot({'id': temp_id,
+                              'volume_id': src_vref['id']})
+
+        snapshot['volume_size'] = src_vref['size']
+        self.create_volume_from_snapshot(volume, snapshot)
+
+        self.delete_snapshot(snapshot)
+
+    def copy_image_to_volume(self, context, volume, image_service, image_id):
+
+        LOG.debug('ENTER: copy_image_to_volume @ DRBD')
+        LOG.debug('VOL :' + str(volume))
+        LOG.debug('VOL IMG SVC :' + str(image_service))
+        LOG.debug('VOL IMG ID :' + str(image_id))
+
+        # self.create_volume(volume) already called by Cinder, and works.
+        # Need to check return values
+        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+
+        # This creates a LINSTOR volume at the original size.
+        image_utils.fetch_to_raw(context,
+                                 image_service,
+                                 image_id,
+                                 str(self._get_rsc_path(full_rsc_name)),
+                                 self.default_blocksize,
+                                 size=volume['size'])
+
+        LOG.debug('EXIT: copy_image_to_volume @ DRBD')
+        return {}
+
+    def copy_volume_to_image(self, context, volume, image_service, image_meta):
+        LOG.debug('ENTER: copy_volume_to_image @ DRBD')
+        LOG.debug('VOL :' + str(volume))
+        LOG.debug('VOL IMG SVC :' + str(image_service))
+        LOG.debug('VOL IMG META :' + str(image_meta))
+
+        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+
+        image_utils.upload_volume(context,
+                                  image_service,
+                                  image_meta,
+                                  str(self._get_rsc_path(full_rsc_name)))
+
+        LOG.debug('EXIT: copy_volume_to_image @ DRBD')
+
+        return {}
+
+
+# Class with iSCSI interface methods
+@interface.volumedriver
+class LinstorIscsiDriver(LinstorBaseDriver):
+    """Cinder iSCSI driver that uses Linstor for storage."""
+
+    # NEED check_for_setup_error, create_volume, delete_volume
+    # NEED to move most of the current LINSTOR functions to the BASE class
+    # for shared usage.
+
+    def __init__(self, *args, **kwargs):
+        super(LinstorIscsiDriver, self).__init__(*args, **kwargs)
+
+        target_driver = self.target_mapping[
+            self.configuration.safe_get('iscsi_helper')]  # target_helper
+
+        LOG.info('START: LINSTOR iSCSI driver '+target_driver)
+
+        self.target_driver = importutils.import_object(
+            target_driver,
+            configuration=self.configuration,
+            db=self.db,
+            executor=self._execute)
+
+    def get_volume_stats(self, refresh=False):
+
+        LOG.debug('ENTER: get_volume_stats @ iSCSI')
+
+        data = self._get_volume_stats()
+        data["storage_protocol"] = 'iSCSI'
+
+        LOG.debug('EXIT: get_volume_stats @ iSCSI')
+
+        return data
+
+    def check_for_setup_error(self):
+
+        LOG.debug('ENTER: check_for_setup_error @ iSCSI')
+
+        if not linstor:
+            msg = _('Linstor not found')
+            LOG.error(msg)
+
+            raise exception.VolumeDriverException(message=msg)
+
+        LOG.debug('EXIT: check_for_setup_error @ iSCSI')
+
+    # TODO(wp)
+    def ensure_export(self, context, volume):
+
+        LOG.debug('ENTER: ensure_export @ iSCSI')
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CTXT: ' + str(context))
+
+        volume_path = self._get_local_path(volume)
+        LOG.debug('VOL PATH: '+str(volume_path))
+
+        LOG.debug('EXIT: ensure_export @ iSCSI')
+
+        return self.target_driver.ensure_export(
+            context,
+            volume,
+            volume_path)
+
+    # TODO(wp)
+    def create_export(self, context, volume, connector):
+
+        LOG.debug('ENTER: create_export @ iSCSI, VOL PATH: ')
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CON: ' + str(connector))
+        LOG.debug('CTXT: ' + str(context))
+
+        volume_path = self._get_local_path(volume)
+        LOG.debug('VOL PATH: ' + str(volume_path))
+
+        export_info = self.target_driver.create_export(
+            context,
+            volume,
+            volume_path)
+
+        LOG.debug('EXIT: create_export @ iSCSI')
+
+        return {'provider_location': export_info['location'],
+                'provider_auth': export_info['auth'], }
+
+    def remove_export(self, context, volume):
+
+        LOG.debug('ENTER-EXIT: remove_export @ iSCSI')
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CTXT: ' + str(context))
+        return self.target_driver.remove_export(context, volume)
+
+    def initialize_connection(self, volume, connector):
+
+        LOG.debug('ENTER-EXIT: initialize_connection @ iSCSI')
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CON: ' + str(connector))
+
+        return self.target_driver.initialize_connection(volume, connector)
+
+    def validate_connector(self, connector):
+
+        LOG.debug('ENTER-EXIT: validate_connector @ iSCSI')
+        LOG.debug('CON: ' + str(connector))
+
+        return self.target_driver.validate_connector(connector)
+
+    def terminate_connection(self, volume, connector, **kwargs):
+
+        LOG.debug('ENTER-EXIT: terminate_connection @ iSCSI')
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CON: ' + str(connector))
+
+        return self.target_driver.terminate_connection(volume,
+                                                       connector,
+                                                       **kwargs)
+
+
+# Class with DRBD transport mode
+@interface.volumedriver
+class LinstorDrbdDriver(LinstorBaseDriver):
+    """Cinder DRBD driver that uses Linstor for storage."""
+
+    def __init__(self, *args, **kwargs):
+        LOG.debug('START: Linstor DRBD driver')
+
+        super(LinstorDrbdDriver, self).__init__(*args, **kwargs)
+
+    # def _get_local_path(self, volumes):
+        #
+        # LOG.debug('ENTER: _get_local_path @ DRBD')
+        #
+        # host_name = socket.gethostname()
+        # for volume in volumes:
+        #     if volume['node_name'] == host_name:
+        #
+        #         LOG.debug("EXIT: _get_local_path @ DRBD")
+        #         return volume['volume'][0].device_path
+        #
+        # message = _('Local Volume not found.')
+        # raise exception.VolumeBackendAPIException(data=message)
+
+    def _return_drbd_config(self, volume):
+
+        LOG.debug('ENTER-EXIT: _return_drbd_config @ DRBD')
+        LOG.debug('VOL ID: ' + str(volume['id']))
+
+        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+
+        return {
+            'driver_volume_type': 'local',
+            'data': {
+                "device_path": str(self._get_rsc_path(full_rsc_name))
+            }
+        }
+
+        # return {
+        #     'driver_volume_type': 'drbd',
+        #     'data': {
+        #         'provider_location': "drbd provider",
+        #         'device': "drbd device path",
+        #         'devices': ["dev/one", "dev/two"],
+        #         # 'provider_auth': subst_data['shared-secret'],
+        #         # 'config': config,
+        #         'name': "drbd rsc one"
+        #     }
+        # }
+
+    def get_volume_stats(self, refresh=False):
+
+        LOG.debug('ENTER: get_volume_stats @ DRBD')
+
+        data = self._get_volume_stats()
+        data["storage_protocol"] = 'DRBD'
+
+        LOG.debug('EXIT: get_volume_stats @ DRBD')
+
+        return data
+
+    def check_for_setup_error(self):
+
+        LOG.debug('ENTER: check_for_setup_error @ DRBD')
+
+        if not linstor:
+            msg = _('Linstor not found')
+            LOG.error(msg)
+
+            raise exception.VolumeDriverException(message=msg)
+
+        LOG.debug('EXIT: check_for_setup_error @ DRBD')
+
+    def initialize_connection(self, volume, connector):
+
+        LOG.debug('ENTER: initialize_connection @ DRBD Base')
+
+        with linstor.Linstor(self.default_uri) as lin:
+            if not lin.connected:
+                lin.connect()
+
+            LOG.debug('VOL: ' + str(volume))
+            LOG.debug('CON: ' + str(connector))
+
+            # rsc_name = self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
+
+            LOG.debug('EXIT: initialize_connection @ DRBD Base')
+
+            return self._return_drbd_config(volume)
+
     # TODO(wp) Not sure if necessary
     def terminate_connection(self, volume, connector, **kwargs):
 
@@ -1031,43 +1129,3 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         #         lin.disconnect()
 
         LOG.debug('EXIT: remove_export @ DRBD')
-
-    # TODO(wp): Needs proper resizing
-    def copy_image_to_volume(self, context, volume, image_service, image_id):
-
-        LOG.debug('ENTER: copy_image_to_volume @ DRBD')
-        LOG.debug('VOL :' + str(volume))
-        LOG.debug('VOL IMG SVC :' + str(image_service))
-        LOG.debug('VOL IMG ID :' + str(image_id))
-
-        # self.create_volume(volume) already called by Cinder, and works.
-        # Need to check return values
-        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
-
-        # This creates a LINSTOR volume at the original size.
-        image_utils.fetch_to_raw(context,
-                                 image_service,
-                                 image_id,
-                                 str(self._get_rsc_path(full_rsc_name)),
-                                 self.default_blocksize,
-                                 size=volume['size'])
-
-        LOG.debug('EXIT: copy_image_to_volume @ DRBD')
-        return {}
-
-    def copy_volume_to_image(self, context, volume, image_service, image_meta):
-        LOG.debug('ENTER: copy_volume_to_image @ DRBD')
-        LOG.debug('VOL :' + str(volume))
-        LOG.debug('VOL IMG SVC :' + str(image_service))
-        LOG.debug('VOL IMG META :' + str(image_meta))
-
-        full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
-
-        image_utils.upload_volume(context,
-                                  image_service,
-                                  image_meta,
-                                  str(self._get_rsc_path(full_rsc_name)))
-
-        LOG.debug('EXIT: copy_volume_to_image @ DRBD')
-
-        return {}
