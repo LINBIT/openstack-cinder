@@ -27,26 +27,20 @@ for more details.
 import socket
 import time
 import uuid
-# import six
-# import sys
-# import math
 
-# from oslo_concurrency import processutils
 from oslo_config import cfg
 from oslo_log import log as logging
-# from oslo_utils import excutils
 from oslo_utils import importutils
 from oslo_utils import units
 
 from cinder import exception
-from cinder import interface
 from cinder.i18n import _
 from cinder.image import image_utils
+from cinder import interface
 from cinder.volume import configuration
 from cinder.volume import driver
 
 import linstor
-
 
 # To override these values, update cinder.conf in /etc/cinder/
 linstor_opts = [
@@ -74,7 +68,8 @@ linstor_opts = [
 
     cfg.StrOpt('linstor_default_volume_group_name',
                default='vg-1',
-               help='Default Volume Group name for LINSTOR. Not Cinder Volume.'),
+               help='Default Volume Group name for LINSTOR.'
+                    'Not Cinder Volume.'),
 
     cfg.StrOpt('linstor_default_uri',
                default='linstor://localhost',
@@ -97,7 +92,7 @@ linstor_opts = [
                help='Default Block size for Image restoration.'),
 
     cfg.StrOpt('iscsi_helper',
-               default='tgtadm', # possibly lioadm as well
+               default='tgtadm',   # possibly lioadm as well
                help='Default iSCSI back-end helper')
 ]
 
@@ -116,7 +111,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.BaseVD):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.0.5'
+    VERSION = '0.0.6'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -126,12 +121,18 @@ class LinstorBaseDriver(driver.BaseVD):
         LOG.debug('START: Base Init Linstor')
 
         self.configuration.append_config_values(linstor_opts)
-        self.default_pool = self.configuration.safe_get('linstor_default_storage_pool_name')
-        self.default_uri = self.configuration.safe_get('linstor_default_uri')
-        self.default_rsc_size = self.configuration.safe_get('linstor_default_resource_size')
-        self.default_downsize_factor = self.configuration.safe_get('linstor_volume_downsize_factor')
-        self.default_vg_name = self.configuration.safe_get('linstor_default_volume_group_name')
-        self.default_blocksize = self.configuration.safe_get('linstor_default_blocksize')
+        self.default_pool = self.configuration.safe_get(
+            'linstor_default_storage_pool_name')
+        self.default_uri = self.configuration.safe_get(
+            'linstor_default_uri')
+        self.default_rsc_size = self.configuration.safe_get(
+            'linstor_default_resource_size')
+        self.default_downsize_factor = self.configuration.safe_get(
+            'linstor_volume_downsize_factor')
+        self.default_vg_name = self.configuration.safe_get(
+            'linstor_default_volume_group_name')
+        self.default_blocksize = self.configuration.safe_get(
+            'linstor_default_blocksize')
 
         self.host_name = socket.gethostname()
 
@@ -207,14 +208,14 @@ class LinstorBaseDriver(driver.BaseVD):
     def _get_local_path(self, volume):
 
         LOG.debug('ENTER: _get_local_path @ DRBD BASE')
-        LOG.debug('LOCAL PATH VOL: '+str(volume))
+        LOG.debug('LOCAL PATH VOL: ' + str(volume))
 
         try:
             full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
 
             return self._get_rsc_path(full_rsc_name)
 
-        except Exception as e:
+        except Exception:
             message = _('Local Volume not found.')
             raise exception.VolumeBackendAPIException(data=message)
 
@@ -229,7 +230,6 @@ class LinstorBaseDriver(driver.BaseVD):
 
             # Storage Pool Definition List
             spd_list_reply = lin.storage_pool_dfn_list()
-            assert len(str(spd_list_reply[0])), "Empty Storage Pool Definition list"
 
             node_list = spd_list_reply[0]
             spd_list = []
@@ -248,7 +248,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
         LOG.debug("ENTER: _get_sp @ DRBD")
 
-        thin_pool = False
+        # thin_pool = False
 
         with linstor.Linstor(self.default_uri) as lin:
 
@@ -257,7 +257,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
             # Fetch Storage Pool List
             sp_list_reply = lin.storage_pool_list()
-            assert len(str(sp_list_reply[0].proto_msg)), "No Storage Pools"
+            # assert len(str(sp_list_reply[0].proto_msg)), "No Storage Pools"
 
             # Fetch Resource Definition List
             sp_list = []
@@ -270,12 +270,12 @@ class LinstorBaseDriver(driver.BaseVD):
                     sp_node['sp_uuid'] = node.stor_pool_uuid
                     sp_node['sp_name'] = node.stor_pool_name
 
-                    for prop in node.props:
-                        if "Vg" in prop.key:
-                            sp_node['vg_name'] = prop.value
-                        if "ThinPool" in prop.key:
-                            # LOG.debug(prop.value+" is a Thin Pool")
-                            thin_pool = True
+                    # for prop in node.props:
+                    #    if "Vg" in prop.key:
+                    #        sp_node['vg_name'] = prop.value
+                    #    if "ThinPool" in prop.key:
+                    #        # LOG.debug(prop.value+" is a Thin Pool")
+                    #        thin_pool = True
 
                     # Free Space and Storage Pool Capacity
                     #
@@ -283,16 +283,12 @@ class LinstorBaseDriver(driver.BaseVD):
                     #
                     # 2. Trying to optimize below causes incorrect result.
                     #    ex. node.free_space.free_space * (units.Ki / units.Gi)
-                    #        is wrong for 2.7  CINDER_UNKNOWN
-                    if thin_pool:
-                        sp_node['sp_free'] = round(node.free_space.free_capacity /
-                                                   (units.Gi / units.Ki), 2)
-                    else:
-                        sp_node['sp_free'] = round(node.free_space.free_capacity /
-                                                   (units.Gi / units.Ki), 2)
-
+                    #        is wrong for 2.7
+                    sp_node['sp_free'] = round(node.free_space.free_capacity /
+                                               (units.Gi / units.Ki), 2)
                     sp_node['sp_cap'] = round(node.free_space.total_capacity /
-                                                   (units.Gi / units.Ki), 2)
+                                              (units.Gi / units.Ki), 2)
+
                     # Driver
                     if node.driver == "LvmDriver":
                         sp_node['driver_name'] = LVM
@@ -313,10 +309,7 @@ class LinstorBaseDriver(driver.BaseVD):
             return sp_list
 
     def _get_vol(self):
-
-        """
-        Local Path = node['volume'][0].device_path+'@'+node['node_name']
-        """
+        # Local Path = node['volume'][0].device_path+'@'+node['node_name']
 
         LOG.debug("ENTER: _get_vol @ DRBD")
 
@@ -327,21 +320,21 @@ class LinstorBaseDriver(driver.BaseVD):
 
             vol_list_reply = lin.volume_list()
 
-            if len(str(vol_list_reply[0])) == 0:
+            if not vol_list_reply[0].proto_msg:
                 LOG.debug("EXIT empty: _get_vol @ DRBD")
                 lin.disconnect()
                 return []
-            else:
-                vol_list = []
-                for volume in vol_list_reply[0].proto_msg.resources:
-                    # print(volume)
-                    vol_node = {}
-                    vol_node['node_name'] = volume.node_name
-                    vol_node['rd_name'] = volume.name
-                    vol_node['volume'] = volume.vlms
-                    vol_list.append(vol_node)
 
-                    LOG.debug("EXIT clean: _get_vol @ DRBD")
+            vol_list = []
+            for volume in vol_list_reply[0].proto_msg.resources:
+                # print(volume)
+                vol_node = {}
+                vol_node['node_name'] = volume.node_name
+                vol_node['rd_name'] = volume.name
+                vol_node['volume'] = volume.vlms
+                vol_list.append(vol_node)
+
+                LOG.debug("EXIT clean: _get_vol @ DRBD")
 
                 lin.disconnect()
                 return vol_list
@@ -349,7 +342,8 @@ class LinstorBaseDriver(driver.BaseVD):
     def _get_volume_stats(self):
 
         data = {}
-        data["volume_backend_name"] = self.configuration.safe_get('volume_backend_name')
+        data["volume_backend_name"] = \
+            self.configuration.safe_get('volume_backend_name')
         data["vendor_name"] = 'Open Source'
         data["driver_version"] = self.VERSION
         data["pools"] = []
@@ -369,19 +363,21 @@ class LinstorBaseDriver(driver.BaseVD):
         # LOG.debug('VOL SP:'+str(sp_data[0]["sp_free"]))
 
         # Free capacity for Local Node
-        local_free_capacity = 0
+        # local_free_capacity = 0.0
         for sp in sp_data:
             if sp['node_name'] == self.host_name:
-                local_free_capacity = sp['sp_free']
+                # local_free_capacity = sp['sp_free']
                 break
 
         location_info = 'LinstorDrbdDriver:' + self.default_uri
 
         single_pool = {}
         single_pool["pool_name"] = data["volume_backend_name"]
-        single_pool["free_capacity_gb"] = local_free_capacity  # sp_data[0]['sp_free']
+        # (local_free_capacity) TODO(wp)
+        single_pool["free_capacity_gb"] = CINDER_UNKNOWN
         single_pool["total_capacity_gb"] = total_capacity_gb
-        single_pool["reserved_percentage"] = self.configuration.reserved_percentage
+        single_pool["reserved_percentage"] = \
+            self.configuration.reserved_percentage
         single_pool["location_info"] = location_info
         single_pool["total_volumes"] = num_vols
         single_pool["filter_function"] = self.get_filter_function()
@@ -427,9 +423,10 @@ class LinstorBaseDriver(driver.BaseVD):
         return rd_list
 
     def _get_resource_nodes(self, resource):
-        """
-        Returns all available resource nodes in a given DRBD cluster
+        """Returns all available resource nodes in a given DRBD cluster
+
         resource: Un-encoded backend resource name
+
         """
         with linstor.Linstor(self.default_uri) as lin:
 
@@ -446,9 +443,8 @@ class LinstorBaseDriver(driver.BaseVD):
             return rsc_list
 
     def _get_linstor_nodes(self):
-        """
-        Returns all available DRBD nodes
-        """
+        # Returns all available DRBD nodes
+
         with linstor.Linstor(self.default_uri) as lin:
 
             if not lin.connected:
@@ -477,13 +473,11 @@ class LinstorBaseDriver(driver.BaseVD):
             assert node_list_reply, "Empty response"
 
             node_list = []
-            if len(str(node_list_reply[0])) == 0:
+            if not node_list_reply[0].proto_msg:
                 LOG.debug("No LINSTOR nodes found on the network.")
 
             else:
                 for node in node_list_reply[0].proto_msg.nodes:
-                    # LOG.info('NODE: '+node.name+' = '+node.uuid+' = '+
-                    #          node.net_interfaces[0].address+'\n')
                     node_item = {}
                     node_item['node_name'] = node.name
                     node_item['node_uuid'] = node.uuid
@@ -500,8 +494,8 @@ class LinstorBaseDriver(driver.BaseVD):
 
         return linstor.Linstor.all_api_responses_success(api_response)
 
-    def do_setup(self, context):
-        super(LinstorBaseDriver, self).do_setup(context)
+    # def do_setup(self, context):
+    #     super(LinstorBaseDriver, self).do_setup(context)
 
     #
     # Snapshot
@@ -525,7 +519,8 @@ class LinstorBaseDriver(driver.BaseVD):
 
             if not self._debug_api_reply(snap_reply):
                 lin.disconnect()
-                raise exception.VolumeBackendAPIException("ERROR creating a LINSTOR snapshot")
+                raise exception.VolumeBackendAPIException(
+                    "ERROR creating a LINSTOR snapshot")
 
             lin.disconnect()
 
@@ -549,11 +544,11 @@ class LinstorBaseDriver(driver.BaseVD):
 
             if not self._debug_api_reply(snap_reply):
                 lin.disconnect()
-                raise exception.VolumeBackendAPIException("ERROR deleting a Linstor snapshot")
+                raise exception.VolumeBackendAPIException(
+                    "ERROR deleting a Linstor snapshot")
 
             # Delete RD if no other RSC are found
-            if len(self._get_resource_nodes(drbd_rsc_name)) == 0:
-
+            if self._get_resource_nodes(drbd_rsc_name) == '':
                 time.sleep(1)
                 rd_reply = lin.resource_dfn_delete(drbd_rsc_name)
 
@@ -579,32 +574,32 @@ class LinstorBaseDriver(driver.BaseVD):
                 lin.connect()
 
             # New RD
-            rd_reply = lin.resource_dfn_create(new_vol_name)
-            if not self._debug_api_reply(rd_reply):
-                print("Error on creating a new RD")
+            lin.resource_dfn_create(new_vol_name)
+            # if not self._debug_api_reply(rd_reply):
+            #     print("Error on creating a new RD")
 
             # New VD from Snap
-            vd_reply = lin.snapshot_volume_definition_restore(src_rsc_name,
-                                                              src_snap_name,
-                                                              new_vol_name)
-            if not self._debug_api_reply(vd_reply):
-                print("Error on creating a new VD from snap")
+            lin.snapshot_volume_definition_restore(src_rsc_name,
+                                                   src_snap_name,
+                                                   new_vol_name)
+            # if not self._debug_api_reply(vd_reply):
+            #     print("Error on creating a new VD from snap")
 
             # New RSC from Snap
             # Assumes restoring to all the available nodes
             nodes = self._get_linstor_nodes()
-            rsc_reply = lin.snapshot_resource_restore(nodes,
-                                                      src_rsc_name,
-                                                      src_snap_name,
-                                                      new_vol_name)
-            if not self._debug_api_reply(rsc_reply):
-                print("Error on creating RSCs from snap")
+            lin.snapshot_resource_restore(nodes,
+                                          src_rsc_name,
+                                          src_snap_name,
+                                          new_vol_name)
+            # if not self._debug_api_reply(rsc_reply):
+            #     print("Error on creating RSCs from snap")
 
             # Upsize if larger volume than original snapshot
             src_rsc_size = int(snapshot['volume_size'])
             new_vol_size = int(volume['size'])
 
-            if new_vol_name > src_rsc_size:
+            if new_vol_size > src_rsc_size:
 
                 upsize_target_name = self._is_clean_volume_name(volume['id'],
                                                                 DM_VN_PREFIX)
@@ -616,7 +611,7 @@ class LinstorBaseDriver(driver.BaseVD):
                     size=self._vol_size_to_linstor(new_vol_size))
 
                 if not self._debug_api_reply(snap_reply):
-                    print("ERROR Linstor Volume Extend")
+                    LOG.debug("ERROR Linstor Volume Extend")
 
             lin.disconnect()
 
@@ -645,7 +640,6 @@ class LinstorBaseDriver(driver.BaseVD):
 
             for node in rsc_list_reply[0].proto_msg.resource_states:
                 if node.rsc_name == src_rsc_name:
-                    # print(node)
                     LOG.debug('VOL Deleting ' + node.rsc_name + ' @ ' +
                               node.node_name)
 
@@ -655,45 +649,36 @@ class LinstorBaseDriver(driver.BaseVD):
                     time.sleep(1)
 
             # Delete existing VD before restoration
-            print('VOL Deleting Volume Definition for ' + src_rsc_name)
-            vd_reply = lin.volume_dfn_delete(src_rsc_name, 0)
-            self._debug_api_reply(vd_reply)
+            lin.volume_dfn_delete(src_rsc_name, 0)
             time.sleep(1)
 
             # Restore a VD from Snap
-            vd_reply = lin.snapshot_volume_definition_restore(src_rsc_name,
-                                                              src_snap_name,
-                                                              src_rsc_name)
-            if not self._debug_api_reply(vd_reply):
-                print("VOL ERROR on creating a new VD from snap")
+            lin.snapshot_volume_definition_restore(src_rsc_name,
+                                                   src_snap_name,
+                                                   src_rsc_name)
 
             # Restore old RSCs from Snap
             # Assumes restoring to all the available nodes
             nodes = self._get_linstor_nodes()
-            rsc_reply = lin.snapshot_resource_restore(nodes,
-                                                      src_rsc_name,
-                                                      src_snap_name,
-                                                      src_rsc_name)
-            if not self._debug_api_reply(rsc_reply):
-                print("VOL ERROR on creating RSCs from snap")
+            lin.snapshot_resource_restore(nodes,
+                                          src_rsc_name,
+                                          src_snap_name,
+                                          src_rsc_name)
 
             # Upsize if larger volume than original snapshot
             src_rsc_size = int(snapshot['volume_size'])
             new_vol_size = int(volume['size'])
 
-            if src_rsc_name > src_rsc_size:
+            if new_vol_size > src_rsc_size:
 
                 upsize_target_name = self._is_clean_volume_name(volume['id'],
                                                                 DM_VN_PREFIX)
 
-                snap_reply = lin.volume_dfn_modify(
+                lin.volume_dfn_modify(
                     rsc_name=upsize_target_name,
                     volume_nr=0,
                     # size=int(new_vol_size * units.Gi / units.Ki))
                     size=self._vol_size_to_linstor(new_vol_size))
-
-                if not self._debug_api_reply(snap_reply):
-                    print("VOL ERROR Linstor Volume Extend")
 
             lin.disconnect()
 
@@ -713,15 +698,19 @@ class LinstorBaseDriver(driver.BaseVD):
         with linstor.Linstor(self.default_uri) as lin:
 
             # Check Connection
-            if not lin.connected:
-                lin.connect()
+            lin.connect()
 
             # Check for Storage Pool List
             sp_data = self._get_storage_pool()
 
             # Get default Storage Pool Definition
             # spd_default = self.default_vg_name
-            rsc_size = volume['size'] if volume['size'] else self.default_rsc_size
+
+            rsc_size = 0
+            if volume['size']:
+                rsc_size = volume['size']
+            else:
+                rsc_size = self.default_rsc_size
 
             # No existing Storage Pools found
             if not sp_data:
@@ -729,7 +718,7 @@ class LinstorBaseDriver(driver.BaseVD):
                 # Check for Nodes
                 node_list = self._get_nodes()
 
-                if len(node_list) == 0:
+                if not node_list:
                     LOG.debug("Error: No resource nodes available")
                     message = _('No resource nodes available / configured')
                     raise exception.VolumeBackendAPIException(data=message)
@@ -738,17 +727,21 @@ class LinstorBaseDriver(driver.BaseVD):
                 spd_name = self._get_spd()[0]['spd_name']
 
                 for node in node_list:
+
+                    node_driver = None
+                    for sp in sp_data:
+                        if sp['node_name'] == node['node_name']:
+                            node_driver = sp['driver_name']
                     lin.storage_pool_create(
                         node_name=node['node_name'],
                         storage_pool_name=spd_name,
-                        storage_driver=LVMTHIN,     # TODO(wp) Update this
+                        storage_driver=node_driver,
                         driver_pool_name=self.default_vg_name)
-                    LOG.debug('Created Storage Pool for ' + spd_name + ' @ ' +
-                              node['node_name'] + ' in ' + self.default_vg_name)
-                # Move on
+                    LOG.debug('Created Storage Pool for ' + spd_name +
+                              ' @ ' + node['node_name'] + ' in ' +
+                              self.default_vg_name)
             else:
                 LOG.debug("Found existing Storage Pools")
-                # Move on
 
             LOG.debug('VOL PROG: create_volume @ DRBD')
 
@@ -776,31 +769,20 @@ class LinstorBaseDriver(driver.BaseVD):
             # if len(str(rd_list[0])) == 0:
 
             # Create a New RD
-            # LOG.debug("No existing Resource Def found.  Created a new one.")
-            rd_reply = lin.resource_dfn_create(rsc_name)  # TODO Error sorting
-            self._debug_api_reply(rd_reply)
+            lin.resource_dfn_create(rsc_name)
 
-            rd_list = lin.resource_dfn_list()
-            LOG.debug("Created RD: " + str(rd_list[0].proto_msg))
+            lin.resource_dfn_list()
+            # rd_list = lin.resource_dfn_list()
+            # LOG.debug("Created RD: " + str(rd_list[0].proto_msg))
 
             # Create a New VD
             vd_size = self._vol_size_to_linstor(rsc_size)
-            LOG.debug("VOL VD Size: " + str(vd_size))
-
-            vd_reply = lin.volume_dfn_create(rsc_name=rsc_name,
-                                             size=int(vd_size))
-            # size=int(rsc_size*units.Gi / units.Ki))  # size in KiB
-
-            self._debug_api_reply(vd_reply)
-            LOG.debug("Created VD: " + str(vd_reply[0].proto_msg))
-
-            # LOG.debug(rd_list[0])
+            lin.volume_dfn_create(rsc_name=rsc_name, size=int(vd_size))
 
             # Create LINSTOR Resources
             for node in sp_data:
-                rsc_reply = lin.resource_create(rsc_name=rsc_name,
-                                                node_name=node['node_name'])
-                self._debug_api_reply(rsc_reply)
+                lin.resource_create(rsc_name=rsc_name,
+                                    node_name=node['node_name'])
 
             lin.disconnect()
 
@@ -824,7 +806,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
             LOG.debug('  Rsc Name: ' + str(drbd_rsc_name))
 
-            if len(str(rsc_list_reply[0])) == 0:
+            if not rsc_list_reply[0].proto_msg:
                 LOG.debug("No RSCs to delete. Still success per Cinder doc.")
 
             else:
@@ -832,7 +814,6 @@ class LinstorBaseDriver(driver.BaseVD):
                 # Delete Resources
                 for node in rsc_list_reply[0].proto_msg.resource_states:
                     if node.rsc_name == drbd_rsc_name:
-                        # print(node)
                         LOG.debug('Deleting ' + node.rsc_name + ' @ ' +
                                   node.node_name)
 
@@ -842,13 +823,13 @@ class LinstorBaseDriver(driver.BaseVD):
                         time.sleep(1)
 
                 # Delete VD
-                print('Deleting Volume Definition for ' + drbd_rsc_name)
+                LOG.debug('Deleting Volume Definition for ' + drbd_rsc_name)
                 vd_reply = lin.volume_dfn_delete(drbd_rsc_name, 0)
                 self._debug_api_reply(vd_reply)
                 time.sleep(1)
 
                 # Delete RD
-                print('Deleting Resource Definition for ' + drbd_rsc_name)
+                LOG.debug('Deleting Resource Definition for ' + drbd_rsc_name)
                 # Will fail if snap exists but expected
                 rd_reply = lin.resource_dfn_delete(drbd_rsc_name)
                 self._debug_api_reply(rd_reply)
@@ -879,13 +860,13 @@ class LinstorBaseDriver(driver.BaseVD):
                 # size=int(new_size * units.Gi / units.Ki))
                 size=self._vol_size_to_linstor(new_size))
             if not self._debug_api_reply(snap_reply):
-                print("ERROR Linstor Volume Extend")
+                LOG.debug("ERROR Linstor Volume Extend")
 
             lin.disconnect()
 
         LOG.debug('EXIT: extend_volume @ DRBD')
 
-    # TODO (wp) Test
+    # TODO(wp) Test
     def create_cloned_volume(self, volume, src_vref):
         temp_id = self._clean_uuid()
         snapshot = {'id': temp_id}
@@ -943,17 +924,13 @@ class LinstorBaseDriver(driver.BaseVD):
 class LinstorIscsiDriver(LinstorBaseDriver):
     """Cinder iSCSI driver that uses Linstor for storage."""
 
-    # NEED check_for_setup_error, create_volume, delete_volume
-    # NEED to move most of the current LINSTOR functions to the BASE class
-    # for shared usage.
-
     def __init__(self, *args, **kwargs):
         super(LinstorIscsiDriver, self).__init__(*args, **kwargs)
 
         target_driver = self.target_mapping[
             self.configuration.safe_get('iscsi_helper')]  # target_helper
 
-        LOG.info('START: LINSTOR iSCSI driver '+target_driver)
+        LOG.info('START: LINSTOR iSCSI driver ' + target_driver)
 
         self.target_driver = importutils.import_object(
             target_driver,
@@ -992,7 +969,7 @@ class LinstorIscsiDriver(LinstorBaseDriver):
         LOG.debug('CTXT: ' + str(context))
 
         volume_path = self._get_local_path(volume)
-        LOG.debug('VOL PATH: '+str(volume_path))
+        LOG.debug('VOL PATH: ' + str(volume_path))
 
         LOG.debug('EXIT: ensure_export @ iSCSI')
 
@@ -1064,20 +1041,6 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         LOG.debug('START: Linstor DRBD driver')
 
         super(LinstorDrbdDriver, self).__init__(*args, **kwargs)
-
-    # def _get_local_path(self, volumes):
-        #
-        # LOG.debug('ENTER: _get_local_path @ DRBD')
-        #
-        # host_name = socket.gethostname()
-        # for volume in volumes:
-        #     if volume['node_name'] == host_name:
-        #
-        #         LOG.debug("EXIT: _get_local_path @ DRBD")
-        #         return volume['volume'][0].device_path
-        #
-        # message = _('Local Volume not found.')
-        # raise exception.VolumeBackendAPIException(data=message)
 
     def _return_drbd_config(self, volume):
 
