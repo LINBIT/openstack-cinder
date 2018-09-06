@@ -111,7 +111,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.BaseVD):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.0.6'
+    VERSION = '0.0.7'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -515,7 +515,7 @@ class LinstorBaseDriver(driver.BaseVD):
             snap_reply = lin.snapshot_create(node_names=node_names,
                                              rsc_name=drbd_rsc_name,
                                              snapshot_name=snap_name,
-                                             async=False)
+                                             async_msg=False)
 
             if not self._debug_api_reply(snap_reply):
                 lin.disconnect()
