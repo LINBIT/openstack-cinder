@@ -91,6 +91,10 @@ linstor_opts = [
                default=4096,
                help='Default Block size for Image restoration.'),
 
+    cfg.BoolOpt('linstor_controller_diskless',
+                default=True,
+                help='True means Cinder node is a diskless LINSTOR node'),
+
     cfg.StrOpt('iscsi_helper',
                default='tgtadm',   # possibly lioadm as well
                help='Default iSCSI back-end helper')
@@ -111,7 +115,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.BaseVD):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.0.7'
+    VERSION = '0.0.8'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -133,7 +137,8 @@ class LinstorBaseDriver(driver.BaseVD):
             'linstor_default_volume_group_name')
         self.default_blocksize = self.configuration.safe_get(
             'linstor_default_blocksize')
-
+        self.diskless = self.configuration.safe_get(
+            'linstor_controller_diskless')
         self.host_name = socket.gethostname()
 
         # LOG.debug('CONFIG URI: '+str(self.default_uri))
@@ -175,6 +180,7 @@ class LinstorBaseDriver(driver.BaseVD):
 
     def _cinder_volume_name_from_drbd_resource(self, rsc_name):
         cinder_volume_name = rsc_name.split(DM_VN_PREFIX)[1]
+        LOG.debug('VOL NAME: ' + str(cinder_volume_name))
         return cinder_volume_name
 
     def _drbd_resource_name_from_cinder_snapshot(self, snapshot):
@@ -284,8 +290,9 @@ class LinstorBaseDriver(driver.BaseVD):
                     # 2. Trying to optimize below causes incorrect result.
                     #    ex. node.free_space.free_space * (units.Ki / units.Gi)
                     #        is wrong for 2.7
-                    sp_node['sp_free'] = round(node.free_space.free_capacity /
-                                               (units.Gi / units.Ki), 2)
+                    # sp_node['sp_free'] = round(node.free_space.free_capacity /
+                    #                            (units.Gi / units.Ki), 2)
+                    sp_node['sp_free'] = CINDER_UNKNOWN
                     sp_node['sp_cap'] = round(node.free_space.total_capacity /
                                               (units.Gi / units.Ki), 2)
 
@@ -433,13 +440,16 @@ class LinstorBaseDriver(driver.BaseVD):
             if not lin.connected:
                 lin.connect()
 
-            rsc_list_reply = lin.resource_list(filter_by_resources=resource)
+            rsc_list_reply = lin.resource_list()
 
             rsc_list = []
             for node in rsc_list_reply[0].proto_msg.resource_states:
-                rsc_list.append(node.node_name)
+                if node.rsc_name == resource:
+                    rsc_list.append(node.node_name)
 
             lin.disconnect()
+
+            LOG.debug('VOL RSC NODES: '+str(rsc_list))
             return rsc_list
 
     def _get_linstor_nodes(self):
@@ -506,6 +516,11 @@ class LinstorBaseDriver(driver.BaseVD):
         snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
         drbd_rsc_name = self._drbd_resource_name_from_cinder_snapshot(snapshot)
         node_names = self._get_resource_nodes(drbd_rsc_name)
+
+        # Filter out controller node if LINSTOR is diskless
+        if self.diskless:
+            node_names.remove(self.host_name)
+            LOG.debug(str(node_names))
 
         with linstor.Linstor(self.default_uri) as lin:
 
@@ -574,26 +589,39 @@ class LinstorBaseDriver(driver.BaseVD):
                 lin.connect()
 
             # New RD
-            lin.resource_dfn_create(new_vol_name)
-            # if not self._debug_api_reply(rd_reply):
-            #     print("Error on creating a new RD")
+            reply = lin.resource_dfn_create(new_vol_name)
+            if not self._debug_api_reply(reply):
+                LOG.debug("VOL ERROR on creating a new RD")
 
             # New VD from Snap
-            lin.snapshot_volume_definition_restore(src_rsc_name,
-                                                   src_snap_name,
-                                                   new_vol_name)
-            # if not self._debug_api_reply(vd_reply):
-            #     print("Error on creating a new VD from snap")
+            reply = lin.snapshot_volume_definition_restore(src_rsc_name,
+                                                           src_snap_name,
+                                                           new_vol_name)
+            if not self._debug_api_reply(reply):
+                LOG.debug("VOL ERROR on creating a new VD from snap")
 
             # New RSC from Snap
-            # Assumes restoring to all the available nodes
+            # Assumes restoring to all the available nodes unless diskless
             nodes = self._get_linstor_nodes()
-            lin.snapshot_resource_restore(nodes,
-                                          src_rsc_name,
-                                          src_snap_name,
-                                          new_vol_name)
-            # if not self._debug_api_reply(rsc_reply):
-            #     print("Error on creating RSCs from snap")
+
+            # Filter out controller node if LINSTOR is diskless
+            if self.diskless:
+                nodes.remove(self.host_name)
+
+            reply = lin.snapshot_resource_restore(nodes,
+                                                  src_rsc_name,
+                                                  src_snap_name,
+                                                  new_vol_name)
+            if not self._debug_api_reply(reply):
+                LOG.debug("VOL ERROR on creating RSCs from snap")
+
+            # Manually add the controller node as a resource if diskless
+            time.sleep(2)
+            if self.diskless:
+                reply = lin.resource_create(rsc_name=new_vol_name,
+                                            node_name=self.host_name)
+                if not self._debug_api_reply(reply):
+                    LOG.debug("VOL ERROR on manually adding RSCs from snap")
 
             # Upsize if larger volume than original snapshot
             src_rsc_size = int(snapshot['volume_size'])
@@ -604,13 +632,13 @@ class LinstorBaseDriver(driver.BaseVD):
                 upsize_target_name = self._is_clean_volume_name(volume['id'],
                                                                 DM_VN_PREFIX)
 
-                snap_reply = lin.volume_dfn_modify(
+                reply = lin.volume_dfn_modify(
                     rsc_name=upsize_target_name,
                     volume_nr=0,
                     # size=int(new_vol_size * units.Gi / units.Ki))
                     size=self._vol_size_to_linstor(new_vol_size))
 
-                if not self._debug_api_reply(snap_reply):
+                if not self._debug_api_reply(reply):
                     LOG.debug("ERROR Linstor Volume Extend")
 
             lin.disconnect()
@@ -658,12 +686,25 @@ class LinstorBaseDriver(driver.BaseVD):
                                                    src_rsc_name)
 
             # Restore old RSCs from Snap
-            # Assumes restoring to all the available nodes
+            # Assumes restoring to all the available nodes unless diskless
             nodes = self._get_linstor_nodes()
+
+            # Filter out controller node if LINSTOR is diskless
+            if self.diskless:
+                nodes.remove(self.host_name)
+
             lin.snapshot_resource_restore(nodes,
                                           src_rsc_name,
                                           src_snap_name,
                                           src_rsc_name)
+
+            # Manually add the controller node as a resource if diskless
+            time.sleep(2)
+            if self.diskless:
+                reply = lin.resource_create(rsc_name=src_rsc_name,
+                                            node_name=self.host_name)
+                if not self._debug_api_reply(reply):
+                    LOG.debug("VOL ERROR on manually adding RSCs from snap")
 
             # Upsize if larger volume than original snapshot
             src_rsc_size = int(snapshot['volume_size'])
