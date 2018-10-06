@@ -332,6 +332,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 lin.connect()
 
             vol_dfn_reply = lin.volume_dfn_create(rsc_name=rsc_name,
+                                                  storage_pool=self.default_pool,
                                                   size=size)
 
             lin.disconnect()
