@@ -583,25 +583,27 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         rd_list_reply = self._get_api_resource_dfn_list()
 
-        for node in rd_list_reply['rscDfns']:
+        #Only if resource definition present
+        if 'rscDfns' in rd_list_reply:
+            for node in rd_list_reply['rscDfns']:
 
-            # Count only Cinder volumes
-            if DM_VN_PREFIX in node['rscName']:
-                rd_node = {}
-                rd_node['rd_uuid'] = node['rscDfnUuid']
-                rd_node['rd_name'] = node['rscName']
-                rd_node['rd_port'] = node['rscDfnPort']
-                # rd_node['rd_secret'] = node.rsc_dfn_secret
+                # Count only Cinder volumes
+                if DM_VN_PREFIX in node['rscName']:
+                    rd_node = {}
+                    rd_node['rd_uuid'] = node['rscDfnUuid']
+                    rd_node['rd_name'] = node['rscName']
+                    rd_node['rd_port'] = node['rscDfnPort']
+                    # rd_node['rd_secret'] = node.rsc_dfn_secret
 
-                if 'vlmDfns' in node:
-                    for vol in node['vlmDfns']:
-                        if vol['vlmNr'] == 0:
-                            rd_node['rd_size'] = round(float(vol['vlmSize']) /
-                                                       units.Mi, 2)
+                    if 'vlmDfns' in node:
+                        for vol in node['vlmDfns']:
+                            if vol['vlmNr'] == 0:
+                                rd_node['rd_size'] = round(float(vol['vlmSize']) /
+                                                           units.Mi, 2)
 
-                rd_list.append(rd_node)
+                    rd_list.append(rd_node)
 
-        LOG.debug("EXIT: _get_resource_definitions @ DRBD")
+            LOG.debug("EXIT: _get_resource_definitions @ DRBD")
         return rd_list
 
     def _get_resource_nodes(self, resource):
