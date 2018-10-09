@@ -472,6 +472,9 @@ class LinstorBaseDriver(driver.VolumeDriver):
                     sp_node['node_name'] = node['nodeName']
                     sp_node['sp_uuid'] = node['storPoolUuid']
                     sp_node['sp_name'] = node['storPoolName']
+                    sp_node['sp_vlms_uuid'] = []
+                    for vlm in node['vlms']:
+                        sp_node['sp_vlms_uuid'].append(vlm['vlmDfnUuid'])
 
                     # for prop in node.props:
                     #    if "Vg" in prop.key:
@@ -546,14 +549,16 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         # Total volumes and capacity
         num_vols = 0
-        total_capacity_gb = 0.0
         for rd in rd_list:
             LOG.debug("VOL RD" + str(rd))
             num_vols += 1
-            if 'rd_size' in rd:
-                total_capacity_gb += rd['rd_size']
 
         # LOG.debug('VOL SP:'+str(sp_data[0]["sp_free"]))
+
+        allocated_sizes_gb = []
+        free_capacity_gb = []
+        total_capacity_gb = []
+        thin_enabled = False
 
         # Free capacity for Local Node
         single_pool = {}
@@ -562,18 +567,35 @@ class LinstorBaseDriver(driver.VolumeDriver):
             # if sp['node_name'] == self.host_name:
             #     # local_free_capacity = sp['sp_free']
             #     continue
-            if 'sp_free' in sp:
-                if sp['sp_free'] >= 0.0:
-                    single_pool["free_capacity_gb"] = sp['sp_free']
+            if 'Diskless' not in sp['driver_name']:
+                if 'LvmThin' in sp['driver_name']:
+                    thin_enabled = True
+                if 'sp_cap' in sp:
+                    if sp['sp_cap'] >= 0.0:
+                        total_capacity_gb.append(sp['sp_cap'])
+                if 'sp_free' in sp:
+                    if sp['sp_free'] >= 0.0:
+                        free_capacity_gb.append(sp['sp_free'])
+                sp_allocated_size_gb = 0
+                for vlm_uuid in sp['sp_vlms_uuid']:
+                    for rd in rd_list:
+                        if rd['vlm_dfns_uuid'] == vlm_uuid:
+                            sp_allocated_size_gb += rd['rd_size']
+                allocated_sizes_gb.append(sp_allocated_size_gb)
 
         location_info = 'LinstorDrbdDriver:' + self.default_uri
 
         single_pool["pool_name"] = data["volume_backend_name"]
         # (local_free_capacity) TODO(wp)
-        single_pool["free_capacity_gb"] = CINDER_UNKNOWN
-        single_pool["total_capacity_gb"] = total_capacity_gb
+        single_pool["free_capacity_gb"] = min(free_capacity_gb)
+        single_pool["total_capacity_gb"] = min(total_capacity_gb)
+        single_pool['provisioned_capacity_gb'] = max(allocated_sizes_gb)
         single_pool["reserved_percentage"] = \
             self.configuration.reserved_percentage
+        single_pool['thin_provisioning_support'] = thin_enabled
+        single_pool['thick_provisioning_support'] = not thin_enabled
+        single_pool['max_over_subscription_ratio'] = (
+            self.configuration.max_over_subscription_ratio)
         single_pool["location_info"] = location_info
         single_pool["total_volumes"] = num_vols
         single_pool["filter_function"] = self.get_filter_function()
@@ -609,8 +631,10 @@ class LinstorBaseDriver(driver.VolumeDriver):
                     if 'vlmDfns' in node:
                         for vol in node['vlmDfns']:
                             if vol['vlmNr'] == 0:
+                                rd_node['vlm_dfns_uuid'] = vol['vlmDfnUuid']
                                 rd_node['rd_size'] = round(float(vol['vlmSize']) /
                                                            units.Mi, 2)
+                                break
 
                     rd_list.append(rd_node)
 
