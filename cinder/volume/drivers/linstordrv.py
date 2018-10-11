@@ -353,13 +353,14 @@ class LinstorBaseDriver(driver.VolumeDriver):
             lin.disconnect()
         return snap_reply
 
-    def _api_rsc_create(self, rsc_name, node_name):
+    def _api_rsc_create(self, rsc_name, node_name, diskless=False):
         with linstor.Linstor(self.default_uri) as lin:
             if not lin.connected:
                 lin.connect()
 
             rsc_reply = lin.resource_create(rsc_name=rsc_name,
-                                            node_name=node_name)
+                                            node_name=node_name,
+                                            diskless=diskless)
 
             lin.disconnect()
         return rsc_reply
@@ -648,10 +649,10 @@ class LinstorBaseDriver(driver.VolumeDriver):
                     if 'vlmDfns' in node:
                         for vol in node['vlmDfns']:
                             if vol['vlmNr'] == 0:
-                                rd_node['vlm_dfn_uuid'] = vol['vlmDfnUuid']                                
+                                rd_node['vlm_dfn_uuid'] = vol['vlmDfnUuid']
                                 rd_node['rd_size'] = round(float(vol['vlmSize']) /
                                                            units.Mi, 2)
-                                break                                
+                                break
 
                     rd_list.append(rd_node)
 
@@ -816,7 +817,13 @@ class LinstorBaseDriver(driver.VolumeDriver):
         # New RSC from Snap
         # Assumes restoring to all the nodes containing the storage pool unless diskless
         nodes = []
+        ctrl_in_sp = False
         for node in self._get_storage_pool():
+
+            # Check if controller is in the storage pool
+            if node['node_name'] == self.host_name:
+                ctrl_in_sp = True
+
             if 'Diskless' in node['driver_name']:
                 continue
 
@@ -838,7 +845,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
         time.sleep(2)
         if self.diskless:
             reply = self._api_rsc_create(rsc_name=new_vol_name,
-                                         node_name=self.host_name)
+                                         node_name=self.host_name,
+                                         diskless=not ctrl_in_sp)
             if not self._debug_api_reply(reply):
                 LOG.debug("VOL ERROR on manually adding RSCs from snap")
 
@@ -1014,7 +1022,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
         # If Retyping from another volume, use parent/origin uuid
         # as a name source
         if (volume['migration_status'] is not None and
-                str(volume['migration_status']).find('success') == -1):
+                    str(volume['migration_status']).find('success') == -1):
             src_name = str(volume['migration_status']).split(':')[1]
             rsc_name = self._is_clean_volume_name(str(src_name),
                                                   DM_VN_PREFIX)
@@ -1040,7 +1048,13 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
 
         # Create LINSTOR Resources
+        ctrl_in_sp = False
         for node in sp_data:
+
+            # Check if controller is in the pool
+            if node['node_name'] == self.host_name:
+                ctrl_in_sp = True
+
             rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
                                              node_name=node['node_name'])
 
@@ -1054,6 +1068,19 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 msg = _("Error creating a LINSTOR resource")
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
+
+        # If the controller is diskless and not in the pool, create a diskless resource on it
+        if not ctrl_in_sp and self.diskless:
+            rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
+                                             node_name=self.host_name,
+                                             diskless=True)
+
+            if not self._debug_api_reply(rsc_reply, noerror_only=True):
+                msg = _("Error creating a LINSTOR resource")
+                LOG.error(msg)
+                raise exception.VolumeBackendAPIException(data=msg)
+
+
 
         LOG.debug('EXIT: create_volume @ DRBD')
         return {}
@@ -1361,6 +1388,12 @@ class LinstorDrbdDriver(LinstorBaseDriver):
         #     }
         # }
 
+    def _node_in_sp(self, node_name):
+        for pool in self._get_storage_pool():
+            if pool['node_name'] == node_name:
+                return False
+        return True
+
     def get_volume_stats(self, refresh=False):
 
         LOG.debug('ENTER: get_volume_stats @ DRBD')
@@ -1386,29 +1419,45 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
     def initialize_connection(self, volume, connector, **kwargs):
 
-        LOG.debug('ENTER: initialize_connection @ DRBD Base')
-
-        with linstor.Linstor(self.default_uri) as lin:
-            if not lin.connected:
-                lin.connect()
-
-            LOG.debug('VOL: ' + str(volume))
-            LOG.debug('CON: ' + str(connector))
-
-            # rsc_name = \
-            #     self._is_clean_volume_name(volume['id'], DM_VN_PREFIX)
-
-            lin.disconnect()
-
+        node_name = connector['host']
+        if self._node_in_sp(connector['host']):
+            LOG.debug('ENTER: initialize_connection @ DRBD Base')
+            full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+            rsc_reply = self._api_rsc_create(rsc_name=full_rsc_name,
+                                             node_name=node_name,
+                                             diskless=True)
+            if not self._debug_api_reply(rsc_reply):
+                msg = _('Error on creating LINSTOR Resource Definition')
+                LOG.error(msg)
+                raise exception.VolumeBackendAPIException(data=msg)
+            time.sleep(2)
             LOG.debug('EXIT: initialize_connection @ DRBD Base')
-            return self._return_drbd_config(volume)
+        else:
+            LOG.debug('SKIP: No need to initialize_connection @ DRBD Base')
+
+        LOG.debug('VOL: ' + str(volume))
+        LOG.debug('CON: ' + str(connector))
+
+        return self._return_drbd_config(volume)
 
     def terminate_connection(self, volume, connector, **kwargs):
 
-        LOG.debug('ENTER: terminate_connection @ DRBD Base')
+        node_name = connector['host']
+        if self._node_in_sp(connector['host']):
+            LOG.debug('ENTER: terminate_connection @ DRBD Base')
+            full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
+            rsc_reply = self._api_rsc_delete(rsc_name=full_rsc_name,
+                                             node_name=node_name)
+            if not self._debug_api_reply(rsc_reply):
+                msg = _('Error on creating LINSTOR Resource Definition')
+                LOG.error(msg)
+                raise exception.VolumeBackendAPIException(data=msg)
+            LOG.debug('EXIT: terminate_connection @ DRBD Base')
+        else:
+            LOG.debug('SKIP: No need to terminate_connection @ DRBD Base')
+
         LOG.debug('VOL: ' + str(volume))
         LOG.debug('CON: ' + str(connector))
-        LOG.debug('EXIT: terminate_connection @ DRBD Base')
 
     def create_export(self, context, volume, connector):
 
