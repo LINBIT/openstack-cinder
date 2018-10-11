@@ -670,9 +670,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
         for node in rsc_list_reply['resourceStates']:
             if node['rscName'] == resource:
                 # Diskless nodes are not available for snapshots
-                if 'rscFlags' in node:
-                    if 'DISKLESS' in node['rscFlags']:
-                        continue
+                if not any(state['diskState'] == 'Diskless' for state in node['vlmStates']):
+                    snap_list.append(node['nodeName'])
 
         LOG.debug('VOL SNAP NODES: ' + str(snap_list))
         return snap_list
