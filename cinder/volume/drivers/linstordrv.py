@@ -338,6 +338,21 @@ class LinstorBaseDriver(driver.VolumeDriver):
             lin.disconnect()
         return vol_dfn_reply
 
+    def _get_api_volume_dfn_set_sp(self, rsc_target_name):
+        with linstor.Linstor(self.default_uri) as lin:
+            if not lin.connected:
+                lin.connect()
+
+            snap_reply = lin.volume_dfn_modify(
+                rsc_name=rsc_target_name,
+                volume_nr=0,
+                set_properties={
+                    'StorPoolName': self.default_pool
+                })
+
+            lin.disconnect()
+        return snap_reply
+
     def _api_rsc_create(self, rsc_name, node_name):
         with linstor.Linstor(self.default_uri) as lin:
             if not lin.connected:
@@ -654,8 +669,9 @@ class LinstorBaseDriver(driver.VolumeDriver):
         for node in rsc_list_reply['resourceStates']:
             if node['rscName'] == resource:
                 # Diskless nodes are not available for snapshots
-                if not any(state['diskState'] == 'Diskless' for state in node['vlmStates']):
-                    snap_list.append(node['nodeName'])
+                if 'rscFlags' in node:
+                    if 'DISKLESS' in node['rscFlags']:
+                        continue
 
         LOG.debug('VOL SNAP NODES: ' + str(snap_list))
         return snap_list
@@ -787,6 +803,13 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                                       new_vol_name)
         if not self._debug_api_reply(reply):
             msg = _('Error on restoring LINSTOR Volume Definition')
+            LOG.error(msg)
+            raise exception.VolumeBackendAPIException(data=msg)
+
+        # Set StorPoolName property on VD
+        reply = self._get_api_volume_dfn_set_sp(new_vol_name)
+        if not self._debug_api_reply(reply):
+            msg = _('Error on restoring LINSTOR Volume Definition StorPoolName property')
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(data=msg)
 
