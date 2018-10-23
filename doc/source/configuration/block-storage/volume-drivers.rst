@@ -40,7 +40,6 @@ Driver Configuration Reference
    drivers/dell-emc-vmax-driver
    drivers/dell-emc-vxflex-driver
    drivers/emc-xtremio-driver
-   drivers/drbd-driver
    drivers/fujitsu-eternus-dx-driver
    drivers/hgst-driver
    drivers/hpe-3par-driver
@@ -56,6 +55,7 @@ Driver Configuration Reference
    drivers/itri-disco-driver
    drivers/kaminario-driver
    drivers/lenovo-driver
+   drivers/linstor-driver
    drivers/nec-storage-m-series-driver
    drivers/netapp-volume-driver
    drivers/nimble-volume-driver
