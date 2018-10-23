@@ -101,7 +101,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.VolumeDriver):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.2.0'
+    VERSION = '0.2.1'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -323,9 +323,9 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 lin.connect()
 
             snap_reply = lin.volume_dfn_modify(
-                rsc_name = rsc_target_name,
-                volume_nr = 0,
-                set_properties = {
+                rsc_name=rsc_target_name,
+                volume_nr=0,
+                set_properties={
                     'StorPoolName': self.default_pool
                 })
 
@@ -560,8 +560,6 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                 sp_allocated_size_gb += rd['rd_size']
                 allocated_sizes_gb.append(sp_allocated_size_gb)
 
-        location_info = 'LinstorDrbdDriver:' + self.default_uri
-
         single_pool["pool_name"] = data["volume_backend_name"]
         single_pool["free_capacity_gb"] = min(free_capacity_gb)
         single_pool["total_capacity_gb"] = min(total_capacity_gb)
@@ -572,7 +570,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
         single_pool['thick_provisioning_support'] = not thin_enabled
         single_pool['max_over_subscription_ratio'] = (
             self.configuration.max_over_subscription_ratio)
-        single_pool["location_info"] = location_info
+        single_pool["location_info"] = self.default_uri
         single_pool["total_volumes"] = num_vols
         single_pool["filter_function"] = self.get_filter_function()
         single_pool["goodness_function"] = self.get_goodness_function()
@@ -619,9 +617,10 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
     def _get_snapshot_nodes(self, resource):
         """Returns all available resource nodes for snapshot,
-        excluding diskless nodes"
+        excluding diskless nodes
 
         """
+
         rsc_list_reply = self._get_api_resource_list()  # reply in dict
 
         snap_list = []
@@ -725,6 +724,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         # Delete RD if no other RSC are found
         if not self._get_snapshot_nodes(drbd_rsc_name):
+            # Wait for backend to catch up
             time.sleep(1)
             self._api_rsc_dfn_delete(drbd_rsc_name)
             # rd_reply = self._api_rsc_dfn_delete(drbd_rsc_name)
@@ -798,8 +798,9 @@ class LinstorBaseDriver(driver.VolumeDriver):
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(data=msg)
 
-        # Manually add the controller node as a resource if diskless
+        # Wait for backend to catch up
         time.sleep(2)
+        # Manually add the controller node as a resource if diskless
         if self.diskless:
             reply = self._api_rsc_create(rsc_name=new_vol_name,
                                          node_name=self.host_name,
@@ -986,6 +987,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                         msg = _("Error deleting a LINSTOR resource")
                         LOG.error(msg)
                         raise exception.VolumeBackendAPIException(data=msg)
+                    # Wait for backend to catch up
                     time.sleep(1)
 
             # Delete VD
@@ -997,6 +999,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                     LOG.error(msg)
                     raise exception.VolumeBackendAPIException(data=msg)
 
+            # Wait for backend to catch up
             time.sleep(1)
 
             # Delete RD
@@ -1027,15 +1030,15 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         LOG.debug('EXIT: extend_volume @ DRBD')
 
-    # TODO(wp) Test
     def create_cloned_volume(self, volume, src_vref):
         temp_id = self._clean_uuid()
-        snapshot = {'id': temp_id}
-
-        self.create_snapshot({'id': temp_id,
-                              'volume_id': src_vref['id']})
-
+        snapshot = {}
+        snapshot['id'] = temp_id
+        snapshot['volume_id'] = src_vref['id']
         snapshot['volume_size'] = src_vref['size']
+
+        self.create_snapshot(snapshot)
+
         self.create_volume_from_snapshot(volume, snapshot)
 
         self.delete_snapshot(snapshot)
@@ -1082,15 +1085,6 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
     # Not supported currently
     def migrate_volume(self, ctxt, volume, host, thin=False, mirror_count=0):
-        """Migration expected in the upcoming LINSTOR client
-        :param volume: A dictionary describing the volume to migrate
-        :param host: A dictionary describing the host to migrate to, where
-                     host['host'] is its name, and host['capabilities'] is a
-                     dictionary of its reported capabilities.
-        :returns: (False, None) if the driver does not support migration,
-                 (True, None) if successful
-
-        """
         return (False, None)
 
     def check_for_setup_error(self):
@@ -1142,6 +1136,8 @@ class LinstorIscsiDriver(LinstorBaseDriver):
 
         data = self._get_volume_stats()
         data["storage_protocol"] = 'iSCSI'
+        data["pools"][0]["location_info"] = \
+            'LinstorIscsiDriver:' + data["pools"][0]["location_info"]
 
         LOG.debug('EXIT: get_volume_stats @ iSCSI')
 
@@ -1264,6 +1260,8 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
         data = self._get_volume_stats()
         data["storage_protocol"] = 'DRBD'
+        data["pools"][0]["location_info"] = \
+            'LinstorDrbdDriver:' + data["pools"][0]["location_info"]
 
         LOG.debug('EXIT: get_volume_stats @ DRBD')
 
@@ -1295,7 +1293,9 @@ class LinstorDrbdDriver(LinstorBaseDriver):
                 msg = _('Error on creating LINSTOR Resource')
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
-            time.sleep(2)
+
+            # # Wait for backend to catch up
+            # time.sleep(2)
             LOG.debug('EXIT: initialize_connection @ DRBD Base')
         else:
             LOG.debug('SKIP: No need to initialize_connection @ DRBD Base')
