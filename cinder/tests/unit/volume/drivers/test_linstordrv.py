@@ -454,7 +454,7 @@ VOLUME_STATS_RESP = {
             'filter_function': None,
             'free_capacity_gb': 35.0,
             'goodness_function': None,
-            'location_info': 'LinstorDrbdDriver:linstor://localhost',
+            'location_info': 'linstor://localhost',
             'max_over_subscription_ratio': 0,
             'multiattach': False,
             'pool_name': 'lin-test-driver',
@@ -1053,7 +1053,7 @@ class LinstorIscsiDriverTestCase(test.TestCase):
         self.driver.default_pool = STORAGE_POOL_DEF_RESP[0]['spd_name']
         self.driver.host_name = 'node_one'
         self.driver.diskless = True
-        self.driver.default_uri = 'linstor://localhost'
+        self.driver.location_info = 'LinstorIscsi:linstor://localhost'
         self.driver.default_backend_name = 'lin-test-driver'
         self.driver.configuration.reserved_percentage = int('0')
         self.driver.configuration.max_over_subscription_ratio = int('0')
@@ -1103,7 +1103,7 @@ class LinstorDrbdDriverTestCase(test.TestCase):
         self.driver.default_pool = STORAGE_POOL_DEF_RESP[0]['spd_name']
         self.driver.host_name = 'node_one'
         self.driver.diskless = True
-        self.driver.default_uri = 'linstor://localhost'
+        self.driver.location_info = 'LinstorDrbd:linstor://localhost'
         self.driver.default_backend_name = 'lin-test-driver'
         self.driver.configuration.reserved_percentage = int('0')
         self.driver.configuration.max_over_subscription_ratio = int('0')

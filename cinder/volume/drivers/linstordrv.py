@@ -101,7 +101,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.VolumeDriver):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.2.1'
+    VERSION = '0.2.2'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -617,7 +617,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
     def _get_snapshot_nodes(self, resource):
         """Returns all available resource nodes for snapshot,
-        excluding diskless nodes
+        excluding diskless nodes"
+
 
         """
 
