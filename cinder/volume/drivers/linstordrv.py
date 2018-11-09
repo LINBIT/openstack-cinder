@@ -101,7 +101,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.VolumeDriver):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.2.2'
+    VERSION = '0.2.3'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -337,9 +337,11 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if not lin.connected:
                 lin.connect()
 
-            rsc_reply = lin.resource_create(rsc_name=rsc_name,
-                                            node_name=node_name,
-                                            diskless=diskless)
+            rsc =lin_drv.ResourceData(rsc_name = rsc_name,
+                                      node_name=node_name,
+                                      diskless=diskless)
+
+            rsc_reply = lin.resource_create([rsc])
 
             lin.disconnect()
             return rsc_reply
@@ -616,9 +618,9 @@ class LinstorBaseDriver(driver.VolumeDriver):
         return rd_list
 
     def _get_snapshot_nodes(self, resource):
-        """Returns all available resource nodes for snapshot,
-        excluding diskless nodes"
+        """Returns all available resource nodes for snapshot
 
+        However, it excludes diskless nodes"
 
         """
 
