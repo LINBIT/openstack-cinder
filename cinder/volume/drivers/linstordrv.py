@@ -101,7 +101,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.VolumeDriver):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.2.4'
+    VERSION = '0.2.5'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -808,7 +808,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
         if self.diskless:
             reply = self._api_rsc_create(rsc_name=new_vol_name,
                                          node_name=self.host_name,
-                                         diskless=not ctrl_in_sp)
+                                         diskless=self.diskless)
             if not self._debug_api_reply(reply, noerror_only=True):
                 LOG.debug("VOL ERROR on manually adding RSCs from snap")
 
