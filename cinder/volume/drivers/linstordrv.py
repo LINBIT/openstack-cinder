@@ -101,7 +101,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.VolumeDriver):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.2.3'
+    VERSION = '0.2.4'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Cinder_Jenkins'
@@ -337,11 +337,12 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if not lin.connected:
                 lin.connect()
 
-            rsc =lin_drv.ResourceData(rsc_name = rsc_name,
-                                      node_name=node_name,
-                                      diskless=diskless)
+            new_rsc = linstor.ResourceData(rsc_name=rsc_name,
+                                       node_name=node_name,
+                                       storage_pool=self.default_pool,
+                                       diskless=diskless)
 
-            rsc_reply = lin.resource_create([rsc])
+            rsc_reply = lin.resource_create([new_rsc], async_msg=False)
 
             lin.disconnect()
             return rsc_reply
@@ -910,7 +911,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         # Create a New RD
         rsc_dfn_reply = self._api_rsc_dfn_create(rsc_name)
-        if not self._debug_api_reply(rsc_dfn_reply):
+        if not self._debug_api_reply(rsc_dfn_reply,
+                                     noerror_only=True):
             msg = _("Error creating a LINSTOR resource definition")
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(data=msg)
@@ -919,7 +921,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
         vd_size = self._vol_size_to_linstor(rsc_size)
         vd_reply = self._api_volume_dfn_create(rsc_name=rsc_name,
                                                size=int(vd_size))
-        if not self._debug_api_reply(vd_reply):
+        if not self._debug_api_reply(vd_reply,
+                                     noerror_only=True):
             msg = _("Error creating a LINSTOR volume definition")
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(data=msg)
@@ -932,14 +935,23 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if node['node_name'] == self.host_name:
                 ctrl_in_sp = True
 
-            rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
-                                             node_name=node['node_name'])
+            # rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
+            #                                  node_name=node['node_name'],
+            #                                  diskless=True)
 
+            # Create resources and,
             # Check only errors when creating diskless resources
             if 'Diskless' in node['driver_name']:
                 noerror_only = True
+                rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
+                                                 node_name=node['node_name'],
+                                                 diskless=True)
+
             else:
                 noerror_only = False
+                rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
+                                                 node_name=node['node_name'],
+                                                 diskless=False)
 
             if not self._debug_api_reply(rsc_reply, noerror_only=noerror_only):
                 msg = _("Error creating a LINSTOR resource")
