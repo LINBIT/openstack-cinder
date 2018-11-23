@@ -337,9 +337,14 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if not lin.connected:
                 lin.connect()
 
+            if diskless:
+                storage_pool = None
+            else:
+                storage_pool = self.default_pool
+
             new_rsc = linstor.ResourceData(rsc_name=rsc_name,
                                        node_name=node_name,
-                                       storage_pool=self.default_pool,
+                                       storage_pool=storage_pool,
                                        diskless=diskless)
 
             rsc_reply = lin.resource_create([new_rsc], async_msg=False)
