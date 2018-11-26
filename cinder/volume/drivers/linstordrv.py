@@ -44,11 +44,11 @@ except ImportError:
 
 try:
     import linstor
+
     lin_drv = linstor.Linstor
 except ImportError:
     linstor = None
     lin_drv = None
-
 
 # To override these values, update cinder.conf in /etc/cinder/
 linstor_opts = [
@@ -82,7 +82,7 @@ linstor_opts = [
                 help='True means Cinder node is a diskless LINSTOR node'),
 
     cfg.StrOpt('iscsi_helper',
-               default='tgtadm',   # possibly lioadm as well
+               default='tgtadm',  # possibly lioadm as well
                help='Default iSCSI back-end helper')
 ]
 
@@ -138,10 +138,10 @@ class LinstorBaseDriver(driver.VolumeDriver):
         """Returns a UUID string, WITHOUT braces."""
         # Some uuid library versions put braces around the result.
         # We don't want them, just a plain [0-9a-f-]+ string.
-        id = str(uuid.uuid4())
-        id = id.replace("{", "")
-        id = id.replace("}", "")
-        return id
+        uuid_str = str(uuid.uuid4())
+        uuid_str = uuid_str.replace("{", "")
+        uuid_str = uuid_str.replace("}", "")
+        return uuid_str
 
     # LINSTOR works in kiB units; Cinder uses GiB.
     def _vol_size_to_linstor(self, size):
@@ -153,7 +153,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def _is_clean_volume_name(self, name, prefix):
         try:
             if (name.startswith(CONF.volume_name_template % "") and
-                    uuid.UUID(name[7:]) is not None):
+                        uuid.UUID(name[7:]) is not None):
                 return prefix + name[7:]
         except ValueError:
             return None
@@ -343,9 +343,9 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 storage_pool = self.default_pool
 
             new_rsc = linstor.ResourceData(rsc_name=rsc_name,
-                                       node_name=node_name,
-                                       storage_pool=storage_pool,
-                                       diskless=diskless)
+                                           node_name=node_name,
+                                           storage_pool=storage_pool,
+                                           diskless=diskless)
 
             rsc_reply = lin.resource_create([new_rsc], async_msg=False)
 
@@ -906,7 +906,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
         # If Retyping from another volume, use parent/origin uuid
         # as a name source
         if (volume['migration_status'] is not None and
-                str(volume['migration_status']).find('success') == -1):
+                    str(volume['migration_status']).find('success') == -1):
             src_name = str(volume['migration_status']).split(':')[1]
             rsc_name = self._is_clean_volume_name(str(src_name),
                                                   DM_VN_PREFIX)
