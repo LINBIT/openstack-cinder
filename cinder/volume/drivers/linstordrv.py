@@ -491,14 +491,15 @@ class LinstorBaseDriver(driver.VolumeDriver):
                         sp_node['sp_cap'] = 0.0
                     else:
                         diskless = False
-                        sp_node['sp_free'] = round(
-                            int(node['freeSpace']['freeCapacity']) / 1048576,
-                            2)
-                        sp_node['sp_cap'] = round(
-                            int(node['freeSpace']['totalCapacity']) / 1048576,
-                            2)
+                        if 'freeSpace' in node:
+                            sp_node['sp_free'] = round(
+                                int(node['freeSpace']['freeCapacity']) / 1048576,
+                                2)
+                            sp_node['sp_cap'] = round(
+                                int(node['freeSpace']['totalCapacity']) / 1048576,
+                                2)
 
-                    # Driver
+                            # Driver
                     if node['driver'] == "LvmDriver":
                         sp_node['driver_name'] = LVM
                     elif node['driver'] == "LvmThinDriver":
