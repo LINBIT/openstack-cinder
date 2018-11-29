@@ -634,12 +634,17 @@ class LinstorBaseDriver(driver.VolumeDriver):
         rsc_list_reply = self._get_api_resource_list()  # reply in dict
 
         snap_list = []
-        for node in rsc_list_reply['resourceStates']:
-            if node['rscName'] == resource:
-                # Diskless nodes are not available for snapshots
-                if not any(state['diskState'] == 'Diskless'
-                           for state in node['vlmStates']):
-                    snap_list.append(node['nodeName'])
+        for rsc in rsc_list_reply['resources']:
+            if rsc['name'] != resource:
+                continue
+
+            # Diskless nodes are not available for snapshots
+            diskless = False
+            if 'rscFlags' in rsc:
+                if 'DISKLESS' in rsc['rscFlags']:
+                    diskless = True
+            if not diskless:
+                snap_list.append(rsc['nodeName'])
 
         LOG.debug('VOL SNAP NODES: ' + str(snap_list))
         return snap_list
@@ -992,20 +997,22 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         else:
             # Delete Resources
-            for node in rsc_list_reply['resourceStates']:
-                if node['rscName'] == drbd_rsc_name:
-                    LOG.debug('Deleting ' + node['rscName'] + ' @ ' +
-                              node['nodeName'])
+            for rsc in rsc_list_reply['resources']:
+                if rsc['name'] != drbd_rsc_name:
+                    continue
 
-                    rsc_reply = self._api_rsc_delete(
-                        node_name=node['nodeName'],
-                        rsc_name=drbd_rsc_name)
-                    if not self._debug_api_reply(rsc_reply, noerror_only=True):
-                        msg = _("Error deleting a LINSTOR resource")
-                        LOG.error(msg)
-                        raise exception.VolumeBackendAPIException(data=msg)
-                    # Wait for backend to catch up
-                    time.sleep(1)
+                LOG.debug('Deleting ' + rsc['name'] + ' @ ' +
+                          rsc['nodeName'])
+
+                rsc_reply = self._api_rsc_delete(
+                    node_name=rsc['nodeName'],
+                    rsc_name=drbd_rsc_name)
+                if not self._debug_api_reply(rsc_reply, noerror_only=True):
+                    msg = _("Error deleting a LINSTOR resource")
+                    LOG.error(msg)
+                    raise exception.VolumeBackendAPIException(data=msg)
+                # Wait for backend to catch up
+                time.sleep(1)
 
             # Delete VD
             LOG.debug('Deleting Volume Definition for ' + drbd_rsc_name)
