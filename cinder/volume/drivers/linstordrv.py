@@ -491,14 +491,15 @@ class LinstorBaseDriver(driver.VolumeDriver):
                         sp_node['sp_cap'] = 0.0
                     else:
                         diskless = False
-                        sp_node['sp_free'] = round(
-                            int(node['freeSpace']['freeCapacity']) / 1048576,
-                            2)
-                        sp_node['sp_cap'] = round(
-                            int(node['freeSpace']['totalCapacity']) / 1048576,
-                            2)
+                        if 'freeSpace' in node:
+                            sp_node['sp_free'] = round(
+                                int(node['freeSpace']['freeCapacity']) / 1048576,
+                                2)
+                            sp_node['sp_cap'] = round(
+                                int(node['freeSpace']['totalCapacity']) / 1048576,
+                                2)
 
-                    # Driver
+                            # Driver
                     if node['driver'] == "LvmDriver":
                         sp_node['driver_name'] = LVM
                     elif node['driver'] == "LvmThinDriver":
@@ -633,12 +634,17 @@ class LinstorBaseDriver(driver.VolumeDriver):
         rsc_list_reply = self._get_api_resource_list()  # reply in dict
 
         snap_list = []
-        for node in rsc_list_reply['resourceStates']:
-            if node['rscName'] == resource:
-                # Diskless nodes are not available for snapshots
-                if not any(state['diskState'] == 'Diskless'
-                           for state in node['vlmStates']):
-                    snap_list.append(node['nodeName'])
+        for rsc in rsc_list_reply['resources']:
+            if rsc['name'] != resource:
+                continue
+
+            # Diskless nodes are not available for snapshots
+            diskless = False
+            if 'rscFlags' in rsc:
+                if 'DISKLESS' in rsc['rscFlags']:
+                    diskless = True
+            if not diskless:
+                snap_list.append(rsc['nodeName'])
 
         LOG.debug('VOL SNAP NODES: ' + str(snap_list))
         return snap_list
@@ -947,18 +953,14 @@ class LinstorBaseDriver(driver.VolumeDriver):
             # Create resources and,
             # Check only errors when creating diskless resources
             if 'Diskless' in node['driver_name']:
-                noerror_only = True
-                rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
-                                                 node_name=node['node_name'],
-                                                 diskless=True)
-
+                diskless = True
             else:
-                noerror_only = False
-                rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
-                                                 node_name=node['node_name'],
-                                                 diskless=False)
+                diskless = False
+            rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
+                                             node_name=node['node_name'],
+                                             diskless=diskless)
 
-            if not self._debug_api_reply(rsc_reply, noerror_only=noerror_only):
+            if not self._debug_api_reply(rsc_reply, noerror_only=True):
                 msg = _("Error creating a LINSTOR resource")
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
@@ -995,20 +997,22 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         else:
             # Delete Resources
-            for node in rsc_list_reply['resourceStates']:
-                if node['rscName'] == drbd_rsc_name:
-                    LOG.debug('Deleting ' + node['rscName'] + ' @ ' +
-                              node['nodeName'])
+            for rsc in rsc_list_reply['resources']:
+                if rsc['name'] != drbd_rsc_name:
+                    continue
 
-                    rsc_reply = self._api_rsc_delete(
-                        node_name=node['nodeName'],
-                        rsc_name=drbd_rsc_name)
-                    if not self._debug_api_reply(rsc_reply):
-                        msg = _("Error deleting a LINSTOR resource")
-                        LOG.error(msg)
-                        raise exception.VolumeBackendAPIException(data=msg)
-                    # Wait for backend to catch up
-                    time.sleep(1)
+                LOG.debug('Deleting ' + rsc['name'] + ' @ ' +
+                          rsc['nodeName'])
+
+                rsc_reply = self._api_rsc_delete(
+                    node_name=rsc['nodeName'],
+                    rsc_name=drbd_rsc_name)
+                if not self._debug_api_reply(rsc_reply, noerror_only=True):
+                    msg = _("Error deleting a LINSTOR resource")
+                    LOG.error(msg)
+                    raise exception.VolumeBackendAPIException(data=msg)
+                # Wait for backend to catch up
+                time.sleep(1)
 
             # Delete VD
             LOG.debug('Deleting Volume Definition for ' + drbd_rsc_name)
@@ -1043,7 +1047,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         snap_reply = self._get_api_volume_extend(rsc_target_name, new_size)
 
-        if not self._debug_api_reply(snap_reply):
+        if not self._debug_api_reply(snap_reply, noerror_only=True):
             msg = _("ERROR Linstor Volume Extend")
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(data=msg)
@@ -1309,7 +1313,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
             rsc_reply = self._api_rsc_create(rsc_name=full_rsc_name,
                                              node_name=node_name,
                                              diskless=True)
-            if not self._debug_api_reply(rsc_reply):
+            if not self._debug_api_reply(rsc_reply, noerror_only=True):
                 msg = _('Error on creating LINSTOR Resource')
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
@@ -1334,7 +1338,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
             full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
             rsc_reply = self._api_rsc_delete(rsc_name=full_rsc_name,
                                              node_name=node_name)
-            if not self._debug_api_reply(rsc_reply):
+            if not self._debug_api_reply(rsc_reply, noerror_only=True):
                 msg = _('Error on deleting LINSTOR Resource')
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
