@@ -101,10 +101,10 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.VolumeDriver):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.2.5'
+    VERSION = '0.3.0'
 
     # ThirdPartySystems wiki page
-    CI_WIKI_NAME = 'Cinder_Jenkins'
+    CI_WIKI_NAME = 'Linbit_LINSTOR'
 
     def __init__(self, *args, **kwargs):
         super(LinstorBaseDriver, self).__init__(*args, **kwargs)
@@ -153,7 +153,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def _is_clean_volume_name(self, name, prefix):
         try:
             if (name.startswith(CONF.volume_name_template % "") and
-                        uuid.UUID(name[7:]) is not None):
+                    uuid.UUID(name[7:]) is not None):
                 return prefix + name[7:]
         except ValueError:
             return None
@@ -754,8 +754,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def create_volume_from_snapshot(self, volume, snapshot):
 
         LOG.debug('ENTER: create_volume_from_snapshot @ DRBD Base')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('SNAP CTXT: ' + str(snapshot))
+
         src_rsc_name = self._drbd_resource_name_from_cinder_snapshot(snapshot)
         src_snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
         new_vol_name = self._drbd_resource_name_from_cinder_volume(volume)
@@ -788,12 +787,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
         # Assumes restoring to all the nodes containing the storage pool unless
         # diskless
         nodes = []
-        ctrl_in_sp = False
         for node in self._get_storage_pool():
-
-            # Check if controller is in the storage pool
-            if node['node_name'] == self.host_name:
-                ctrl_in_sp = True
 
             if 'Diskless' in node['driver_name']:
                 continue
@@ -845,10 +839,6 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def create_volume(self, volume):
 
         LOG.debug('ENTER: create_volume @ DRBD')
-        LOG.debug('  Display Name: ' + volume['display_name'])
-        LOG.debug('  Host        : ' + volume['host'])
-        LOG.debug('  Volume Size : ' + str(volume['size']))
-        LOG.debug('  VOL         : ' + str(volume))
 
         # Check for Storage Pool List
         sp_data = self._get_storage_pool()
@@ -983,9 +973,6 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def delete_volume(self, volume):
 
         LOG.debug('ENTER: delete_volume @ DRBD')
-        LOG.debug('  Display Name: ' + volume['display_name'])
-        LOG.debug('  Host        : ' + volume['host'])
-        LOG.debug('  Volume Size : ' + str(volume['size']))
 
         drbd_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
         rsc_list_reply = self._get_api_resource_list()
@@ -1070,9 +1057,6 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def copy_image_to_volume(self, context, volume, image_service, image_id):
 
         LOG.debug('ENTER: copy_image_to_volume @ DRBD')
-        LOG.debug('VOL :' + str(volume))
-        LOG.debug('VOL IMG SVC :' + str(image_service))
-        LOG.debug('VOL IMG ID :' + str(image_id))
 
         # self.create_volume(volume) already called by Cinder, and works.
         # Need to check return values
@@ -1091,10 +1075,6 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
     def copy_volume_to_image(self, context, volume, image_service, image_meta):
         LOG.debug('ENTER: copy_volume_to_image @ DRBD')
-        LOG.debug('VOL CTXT:' + str(context))
-        LOG.debug('VOL :' + str(volume))
-        LOG.debug('VOL IMG SVC :' + str(image_service))
-        LOG.debug('VOL IMG META :' + str(image_meta))
 
         full_rsc_name = self._drbd_resource_name_from_cinder_volume(volume)
         rsc_path = str(self._get_rsc_path(full_rsc_name))
@@ -1182,8 +1162,6 @@ class LinstorIscsiDriver(LinstorBaseDriver):
     def ensure_export(self, context, volume):
 
         LOG.debug('ENTER: ensure_export @ iSCSI')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('CTXT: ' + str(context))
 
         volume_path = self._get_local_path(volume)
         LOG.debug('VOL PATH: ' + str(volume_path))
@@ -1198,9 +1176,6 @@ class LinstorIscsiDriver(LinstorBaseDriver):
     def create_export(self, context, volume, connector):
 
         LOG.debug('ENTER: create_export @ iSCSI, VOL PATH: ')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('CON: ' + str(connector))
-        LOG.debug('CTXT: ' + str(context))
 
         volume_path = self._get_local_path(volume)
         LOG.debug('VOL PATH: ' + str(volume_path))
@@ -1218,30 +1193,23 @@ class LinstorIscsiDriver(LinstorBaseDriver):
     def remove_export(self, context, volume):
 
         LOG.debug('ENTER-EXIT: remove_export @ iSCSI')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('CTXT: ' + str(context))
         return self.target_driver.remove_export(context, volume)
 
     def initialize_connection(self, volume, connector, **kwargs):
 
         LOG.debug('ENTER-EXIT: initialize_connection @ iSCSI')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('CON: ' + str(connector))
 
         return self.target_driver.initialize_connection(volume, connector)
 
     def validate_connector(self, connector):
 
         LOG.debug('ENTER-EXIT: validate_connector @ iSCSI')
-        LOG.debug('CON: ' + str(connector))
 
         return self.target_driver.validate_connector(connector)
 
     def terminate_connection(self, volume, connector, **kwargs):
 
         LOG.debug('ENTER-EXIT: terminate_connection @ iSCSI')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('CON: ' + str(connector))
 
         return self.target_driver.terminate_connection(volume,
                                                        connector,
@@ -1351,25 +1319,16 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
     def create_export(self, context, volume, connector):
 
-        LOG.debug('ENTER: create_export @ DRBD')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('CON: ' + str(connector))
-        LOG.debug('CTXT :' + str(context))
-        LOG.debug('EXIT: create_export @ DRBD')
+        LOG.debug('ENTER-EXIT: create_export @ DRBD')
 
         return self._return_drbd_config(volume)
 
     def ensure_export(self, context, volume):
 
-        LOG.debug('ENTER: ensure_export @ DRBD')
-        LOG.debug('VOL :' + str(volume))
-        LOG.debug('CTXT :' + str(context))
-        LOG.debug('EXIT: ensure_export @ DRBD')
+        LOG.debug('ENTER-EXIT: ensure_export @ DRBD')
 
         return self._return_drbd_config(volume)
 
     def remove_export(self, context, volume):
 
-        LOG.debug('ENTER: remove_export @ DRBD')
-        LOG.debug('VOL: ' + str(volume))
-        LOG.debug('EXIT: remove_export @ DRBD')
+        LOG.debug('ENTER-EXIT: remove_export @ DRBD')

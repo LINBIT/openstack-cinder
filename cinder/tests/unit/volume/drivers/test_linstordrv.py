@@ -520,6 +520,8 @@ class LinstorAPIFakeDriver(object):
     def fake_api_snapshot_delete(self):
         return None
 
+    def fake_api_snapshot_list(self):
+        return SNAPSHOT_LIST_RESP
 
 class LinstorBaseDriverTestCase(test.TestCase):
 
@@ -669,9 +671,9 @@ class LinstorBaseDriverTestCase(test.TestCase):
         self.assertEqual(val, expected)
 
     @skip_unless_linstor_installed
-    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_snapshot_nodes')
     def test_get_snapshot_nodes(self, m_rsc_list):
-        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
+        m_rsc_list.return_value = self._fake_driver.fake_api_snapshot_list()
 
         val = self.driver._get_snapshot_nodes(VOLUME_NAMES['linstor'])
         expected = SNAPSHOT_LIST_RESP
