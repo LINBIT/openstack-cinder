@@ -1,0 +1,4 @@
+---
+upgrade:
+  - |
+    LINBIT's DRBDManage Driver is updated to DRBD/LINSTOR Driver.
