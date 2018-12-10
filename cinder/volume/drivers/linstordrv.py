@@ -53,7 +53,7 @@ except ImportError:
 # To override these values, update cinder.conf in /etc/cinder/
 linstor_opts = [
     cfg.StrOpt('linstor_default_volume_group_name',
-               default='vg-1',
+               default='drbd-vg',
                help='Default Volume Group name for LINSTOR.'
                     'Not Cinder Volume.'),
 
@@ -101,7 +101,7 @@ LVMTHIN = 'LvmThin'
 class LinstorBaseDriver(driver.VolumeDriver):
     """Cinder driver that uses Linstor for storage."""
 
-    VERSION = '0.3.0'
+    VERSION = '1.0.0'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'Linbit_LINSTOR'
@@ -1151,7 +1151,7 @@ class LinstorIscsiDriver(LinstorBaseDriver):
 
         LOG.debug('ENTER: check_for_setup_error @ iSCSI')
 
-        if not linstor:
+        if linstor is None:
             msg = _('Linstor not found')
             LOG.error(msg)
 
@@ -1263,7 +1263,7 @@ class LinstorDrbdDriver(LinstorBaseDriver):
 
         LOG.debug('ENTER: check_for_setup_error @ DRBD')
 
-        if not linstor:
+        if linstor is None:
             msg = _('Linstor not found')
             LOG.error(msg)
 

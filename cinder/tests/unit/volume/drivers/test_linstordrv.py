@@ -1075,8 +1075,9 @@ class LinstorIscsiDriverTestCase(test.TestCase):
 
     @skip_unless_linstor_installed
     def test_iscsi_check_for_setup_error_pass(self):
-        val = self.driver.check_for_setup_error()
-        self.assertIsNone(val)
+        if drv is not None:
+            val = self.driver.check_for_setup_error()
+            self.assertIsNone(val)
 
     @skip_unless_linstor_installed
     def test_iscsi_create_export(self):
@@ -1146,11 +1147,9 @@ class LinstorDrbdDriverTestCase(test.TestCase):
 
     @skip_unless_linstor_installed
     def test_drbd_check_for_setup_error_pass(self):
-        # with mock.patch.dict(sys.modules, {'linstor': None}):
-        #     self.assertRaises(cinder_exception.VolumeBackendAPIException,
-        #                       self.driver.check_for_setup_error)
-        val = self.driver.check_for_setup_error()
-        self.assertIsNone(val)
+        if drv is not None:
+            val = self.driver.check_for_setup_error()
+            self.assertIsNone(val)
 
     @skip_unless_linstor_installed
     @mock.patch(DRIVER + 'LinstorDrbdDriver._get_rsc_path')
