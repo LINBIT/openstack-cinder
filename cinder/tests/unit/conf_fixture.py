@@ -38,7 +38,7 @@ def set_defaults(conf):
                      'cinder.tests.fake_driver.FakeLoggingVolumeDriver',
                      group=configuration.SHARED_CONF_GROUP)
     conf.set_default('target_helper', 'fake')
-    conf.set_default('rpc_backend', 'cinder.openstack.common.rpc.impl_fake')
+    conf.set_default('transport_url', 'fake:/')
     conf.set_default('connection', 'sqlite://', group='database')
     conf.set_default('sqlite_synchronous', False, group='database')
     conf.set_default('policy_file', 'cinder.tests.unit/policy.json',
@@ -56,4 +56,4 @@ def set_defaults(conf):
     conf.set_default('policy_dirs', [], group='oslo_policy')
     # This is where we don't authenticate
     conf.set_default('auth_strategy', 'noauth')
-    conf.set_default('auth_uri', 'fake', 'keystone_authtoken')
+    conf.set_default('auth_url', 'fake', 'keystone_authtoken')

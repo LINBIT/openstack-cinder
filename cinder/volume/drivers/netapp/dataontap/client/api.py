@@ -26,6 +26,7 @@ from eventlet import semaphore
 
 from lxml import etree
 from oslo_log import log as logging
+from oslo_utils import netutils
 import random
 import six
 from six.moves import urllib
@@ -281,7 +282,12 @@ class NaServer(object):
         return processed_response.get_child_by_name('results')
 
     def _get_url(self):
-        return '%s://%s:%s/%s' % (self._protocol, self._host, self._port,
+        host = self._host
+
+        if netutils.is_valid_ipv6(host):
+            host = netutils.escape_ipv6(host)
+
+        return '%s://%s:%s/%s' % (self._protocol, host, self._port,
                                   self._url)
 
     def _build_opener(self):
@@ -334,7 +340,7 @@ class NaElement(object):
 
     def add_attrs(self, **attrs):
         """Add multiple attributes to the element."""
-        for attr in attrs.keys():
+        for attr in attrs:
             self._element.set(attr, attrs.get(attr))
 
     def add_child_elem(self, na_element):
@@ -342,7 +348,7 @@ class NaElement(object):
         if isinstance(na_element, NaElement):
             self._element.append(na_element._element)
             return
-        raise
+        raise Exception(_('Failed to add child element.'))
 
     def get_child_by_name(self, name):
         """Get the child element by the tag name."""
@@ -399,7 +405,7 @@ class NaElement(object):
     def create_node_with_children(node, **children):
         """Creates and returns named node with children."""
         parent = NaElement(node)
-        for child in children.keys():
+        for child in children:
             parent.add_new_child(child, children.get(child, None))
         return parent
 

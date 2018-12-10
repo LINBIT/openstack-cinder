@@ -16,6 +16,7 @@ import mock
 import taskflow.engines
 
 from cinder import context
+from cinder import exception
 from cinder import test
 from cinder.tests.unit import fake_constants as fakes
 from cinder.tests.unit import fake_volume
@@ -38,7 +39,7 @@ class ManageVolumeFlowTestCase(test.TestCase):
         self.counter = float(0)
 
     def test_cast_manage_existing(self):
-        volume = fake_volume.fake_volume_type_obj(self.ctxt)
+        volume = fake_volume.fake_volume_obj(self.ctxt)
 
         spec = {
             'name': 'name',
@@ -61,6 +62,28 @@ class ManageVolumeFlowTestCase(test.TestCase):
         create_what.update({'volume': volume})
         create_what.pop('volume_id')
         task.execute(self.ctxt, **create_what)
+
+    def test_create_db_entry_task_with_multiattach(self):
+
+        fake_volume_type = fake_volume.fake_volume_type_obj(
+            self.ctxt, extra_specs={'multiattach': '<is> True'})
+
+        spec = {
+            'name': 'name',
+            'description': 'description',
+            'host': 'host',
+            'ref': 'ref',
+            'volume_type': fake_volume_type,
+            'metadata': {},
+            'availability_zone': 'availability_zone',
+            'bootable': 'bootable',
+            'volume_type_id': fake_volume_type.id,
+            'cluster_name': 'fake_cluster'
+        }
+        task = manage_existing.EntryCreateTask(fake_volume_api.FakeDb())
+
+        result = task.execute(self.ctxt, **spec)
+        self.assertTrue(result['volume_properties']['multiattach'])
 
     @staticmethod
     def _stub_volume_object_get(self):
@@ -104,6 +127,54 @@ class ManageVolumeFlowTestCase(test.TestCase):
         mock_error_out.assert_called_once_with(volume_ref,
                                                reason='Volume manage failed.',
                                                status='error_managing')
+
+    def test_prepare_for_quota_reservation_with_wrong_volume(self):
+        """Test the class PrepareForQuotaReservationTas with wrong vol."""
+        mock_db = mock.MagicMock()
+        mock_driver = mock.MagicMock()
+        wrong_volume = mock.MagicMock()
+        mock_manage_existing_ref = mock.MagicMock()
+        mock_except = exception.CinderException
+
+        mock_driver.manage_existing_get_size.side_effect = mock_except
+        task = manager.PrepareForQuotaReservationTask(mock_db, mock_driver)
+        self.assertRaises(exception.CinderException,
+                          task.execute,
+                          self.ctxt,
+                          wrong_volume,
+                          mock_manage_existing_ref)
+
+    def test_manage_existing_task(self):
+        """Test the class ManageExistingTask."""
+        mock_db = mock.MagicMock()
+        mock_driver = mock.MagicMock()
+        mock_volume = mock.MagicMock()
+        mock_manage_existing_ref = mock.MagicMock()
+        mock_size = mock.MagicMock()
+
+        task = manager.ManageExistingTask(mock_db, mock_driver)
+        rv = task.execute(self.ctxt, mock_volume, mock_manage_existing_ref,
+                          mock_size)
+
+        expected_output = {'volume': mock_volume}
+        self.assertDictEqual(rv, expected_output)
+
+    def test_manage_existing_task_with_wrong_volume(self):
+        """Test the class ManageExistingTask with wrong volume."""
+        mock_db = mock.MagicMock()
+        mock_driver = mock.MagicMock()
+        mock_volume = mock.MagicMock()
+        mock_volume.update.side_effect = exception.CinderException
+        mock_manage_existing_ref = mock.MagicMock()
+        mock_size = mock.MagicMock()
+
+        task = manager.ManageExistingTask(mock_db, mock_driver)
+        self.assertRaises(exception.CinderException,
+                          task.execute,
+                          self.ctxt,
+                          mock_volume,
+                          mock_manage_existing_ref,
+                          mock_size)
 
     def test_get_flow(self):
         mock_volume_flow = mock.Mock()

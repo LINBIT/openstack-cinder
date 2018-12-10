@@ -86,6 +86,7 @@ class VMAXCommonData(object):
     device_id = '00001'
     device_id2 = '00002'
     device_id3 = '00003'
+    device_id4 = '00004'
     rdf_group_name = '23_24_007'
     rdf_group_no = '70'
     u4v_version = '84'
@@ -570,7 +571,15 @@ class VMAXCommonData(object):
                        "num_of_storage_groups": 0,
                        "volumeId": device_id3,
                        "volume_identifier": '123',
-                       "wwn": '600012345'}]
+                       "wwn": '600012345'},
+                      {"cap_gb": 1,
+                       "num_of_storage_groups": 1,
+                       "volumeId": device_id4,
+                       "volume_identifier": "random_name",
+                       "wwn": '600012345',
+                       "storageGroupId": ["random_sg_1",
+                                          "random_sg_2"]},
+                      ]
 
     volume_list = [
         {"resultList": {"result": [{"volumeId": device_id}]}},
@@ -1206,6 +1215,7 @@ class FakeConfiguration(object):
         self.volume_backend_name = volume_backend_name
         self.config_group = volume_backend_name
         self.san_is_local = False
+        self.max_over_subscription_ratio = 1
         if replication_device:
             self.replication_device = [replication_device]
         for key, value in kwargs.items():
@@ -1389,6 +1399,12 @@ class VMAXUtilsTest(test.TestCase):
             volume, external_ref)
         self.assertEqual(self.data.array, array)
         self.assertEqual('00002', device_id)
+        # Test to check if device id returned is in upper case
+        external_ref = {u'source-name': u'0028a'}
+        __, device_id = self.utils.get_array_and_device_id(
+            volume, external_ref)
+        ref_device_id = u'0028A'
+        self.assertEqual(ref_device_id, device_id)
 
     def test_get_array_and_device_id_exception(self):
         volume = deepcopy(self.data.test_volume)
@@ -2402,24 +2418,17 @@ class VMAXRestTest(test.TestCase):
             init_list = self.rest.get_initiator_list(array)
             self.assertIsNotNone(init_list)
 
-    def test_get_initiator_list_none(self):
+    def test_get_initiator_list_empty(self):
         array = self.data.array
         with mock.patch.object(self.rest, 'get_resource', return_value={}):
             init_list = self.rest.get_initiator_list(array)
             self.assertEqual([], init_list)
 
-    def test_get_in_use_initiator_list_from_array(self):
-        ref_list = self.data.initiator_list[2]['initiatorId']
-        init_list = self.rest.get_in_use_initiator_list_from_array(
-            self.data.array)
-        self.assertEqual(ref_list, init_list)
-
-    def test_get_in_use_initiator_list_from_array_failed(self):
+    def test_get_initiator_list_none(self):
         array = self.data.array
-        with mock.patch.object(self.rest, 'get_initiator_list',
-                               return_value=[]):
-            init_list = self.rest.get_in_use_initiator_list_from_array(array)
-            self.assertEqual([], init_list)
+        with mock.patch.object(self.rest, 'get_resource', return_value=None):
+            init_list = self.rest.get_initiator_list(array)
+            self.assertIsNotNone(init_list)
 
     def test_get_initiator_group_from_initiator(self):
         initiator = self.data.wwpn1
@@ -4890,7 +4899,8 @@ class VMAXCommonTest(test.TestCase):
         provider_location = {'device_id': u'00002', 'array': u'000197800123'}
         ref_update = {'provider_location': six.text_type(provider_location)}
         with mock.patch.object(
-                self.common, '_check_lun_valid_for_cinder_management'):
+                self.common, '_check_lun_valid_for_cinder_management',
+                return_value=('vol1', 'test_sg')):
             model_update = self.common.manage_existing(
                 self.data.test_volume, external_ref)
             self.assertEqual(ref_update, model_update)
@@ -4903,8 +4913,25 @@ class VMAXCommonTest(test.TestCase):
         return_value=(False, False, None))
     def test_check_lun_valid_for_cinder_management(self, mock_rep, mock_mv):
         external_ref = {u'source-name': u'00003'}
-        self.common._check_lun_valid_for_cinder_management(
+        vol, source_sg = self.common._check_lun_valid_for_cinder_management(
             self.data.array, self.data.device_id3,
+            self.data.test_volume.id, external_ref)
+        self.assertEqual(vol, '123')
+        self.assertIsNone(source_sg)
+
+    @mock.patch.object(
+        rest.VMAXRest, 'get_masking_views_from_storage_group',
+        return_value=None)
+    @mock.patch.object(
+        rest.VMAXRest, 'is_vol_in_rep_session',
+        return_value=(False, False, None))
+    def test_check_lun_valid_for_cinder_management_multiple_sg_exception(
+            self, mock_rep, mock_mv):
+        external_ref = {u'source-name': u'00004'}
+        self.assertRaises(
+            exception.ManageExistingInvalidReference,
+            self.common._check_lun_valid_for_cinder_management,
+            self.data.array, self.data.device_id4,
             self.data.test_volume.id, external_ref)
 
     @mock.patch.object(
@@ -6778,18 +6805,26 @@ class VMAXMaskingTest(test.TestCase):
             exception.VolumeBackendAPIException,
             self.driver_fc.masking.find_initiator_names, connector)
 
-    def test_find_initiator_group(self):
+    def test_find_initiator_group_found(self):
         with mock.patch.object(
-                rest.VMAXRest, 'get_in_use_initiator_list_from_array',
+                rest.VMAXRest, 'get_initiator_list',
                 return_value=self.data.initiator_list[2]['initiatorId']):
             with mock.patch.object(
-                rest.VMAXRest, 'get_initiator_group_from_initiator',
+                    rest.VMAXRest, 'get_initiator_group_from_initiator',
                     return_value=self.data.initiator_list):
                 found_init_group_nam = (
                     self.driver.masking._find_initiator_group(
                         self.data.array, ['FA-1D:4:123456789012345']))
                 self.assertEqual(self.data.initiator_list,
                                  found_init_group_nam)
+
+    def test_find_initiator_group_not_found(self):
+        with mock.patch.object(
+                rest.VMAXRest, 'get_initiator_list',
+                return_value=self.data.initiator_list[2]['initiatorId']):
+            with mock.patch.object(
+                    rest.VMAXRest, 'get_initiator_group_from_initiator',
+                    return_value=None):
                 found_init_group_nam = (
                     self.driver.masking._find_initiator_group(
                         self.data.array, ['Error']))
@@ -7653,7 +7688,8 @@ class VMAXCommonReplicationTest(test.TestCase):
             self.data.test_volume.id)
         provider_location = {'device_id': u'00002', 'array': self.data.array}
         with mock.patch.object(
-                self.common, '_check_lun_valid_for_cinder_management'):
+                self.common, '_check_lun_valid_for_cinder_management',
+                return_value=(volume_name, 'test_sg')):
             self.common.manage_existing(
                 self.data.test_volume, external_ref)
             mock_rep.assert_called_once_with(

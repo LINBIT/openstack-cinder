@@ -155,9 +155,11 @@ CONF = cfg.CONF
 CONF.register_opts(volume_manager_opts)
 CONF.register_opts(volume_backend_opts, group=config.SHARED_CONF_GROUP)
 
+# MAPPING is used for driver renames to keep backwards compatibilty. When a
+# driver is renamed, add a mapping here from the old name (the dict key) to the
+# new name (the dict value) for at least a cycle to allow time for deployments
+# to transition.
 MAPPING = {
-    'cinder.volume.drivers.windows.windows.WindowsDriver':
-    'cinder.volume.drivers.windows.iscsi.WindowsISCSIDriver',
 }
 
 
@@ -687,14 +689,15 @@ class VolumeManager(manager.CleanableManager,
                 self._update_allocated_capacity(volume, decrement=True,
                                                 host=original_host)
 
-        shared_targets = (
-            1
-            if self.driver.capabilities.get('shared_targets', True)
-            else 0)
-        updates = {'service_uuid': self.service_uuid,
-                   'shared_targets': shared_targets}
-
-        volume.update(updates)
+        # Shared targets is only relevant for iSCSI connections.
+        # We default to True to be on the safe side.
+        volume.shared_targets = (
+            self.driver.capabilities.get('storage_protocol') == 'iSCSI' and
+            self.driver.capabilities.get('shared_targets', True))
+        # TODO(geguileo): service_uuid won't be enough on Active/Active
+        # deployments. There can be 2 services handling volumes from the same
+        # backend.
+        volume.service_uuid = self.service_uuid
         volume.save()
 
         LOG.info("Created volume successfully.", resource=volume)
@@ -1416,9 +1419,12 @@ class VolumeManager(manager.CleanableManager,
         reserve_opts = {'volumes': 1, 'gigabytes': volume.size}
         QUOTAS.add_volume_type_opts(ctx, reserve_opts, volume_type_id)
         reservations = QUOTAS.reserve(ctx, **reserve_opts)
+        # NOTE(yikun): Skip 'snapshot_id', 'source_volid' keys to avoid
+        # creating tmp img vol from wrong snapshot or wrong source vol.
+        skip = {'snapshot_id', 'source_volid'}
+        skip.update(self._VOLUME_CLONE_SKIP_PROPERTIES)
         try:
-            new_vol_values = {k: volume[k] for k in set(volume.keys()) -
-                              self._VOLUME_CLONE_SKIP_PROPERTIES}
+            new_vol_values = {k: volume[k] for k in set(volume.keys()) - skip}
             new_vol_values['volume_type_id'] = volume_type_id
             new_vol_values['attach_status'] = (
                 fields.VolumeAttachStatus.DETACHED)
@@ -1997,7 +2003,7 @@ class VolumeManager(manager.CleanableManager,
     def _copy_volume_data(self, ctxt, src_vol, dest_vol, remote=None):
         """Copy data from src_vol to dest_vol."""
 
-        LOG.debug('copy_data_between_volumes %(src)s -> %(dest)s.',
+        LOG.debug('_copy_volume_data %(src)s -> %(dest)s.',
                   {'src': src_vol['name'], 'dest': dest_vol['name']})
         attach_encryptor = False
         # If the encryption method or key is changed, we have to
@@ -2313,7 +2319,7 @@ class VolumeManager(manager.CleanableManager,
                                      attachment.instance_uuid,
                                      attachment.attached_host,
                                      attachment.mountpoint,
-                                     'rw')
+                                     attachment.attach_mode or 'rw')
                 # At this point we now have done almost all of our swapping and
                 # state-changes.  The target volume is now marked back to
                 # "in-use" the destination/worker volume is now in deleting
@@ -2570,7 +2576,7 @@ class VolumeManager(manager.CleanableManager,
             extra_usage_info=extra_usage_info, host=self.host)
 
         if not volumes:
-            volumes = self.db.volume_get_all_by_generic_group(
+            volumes = objects.VolumeList.get_all_by_generic_group(
                 context, group.id)
         if volumes:
             for volume in volumes:
@@ -2687,8 +2693,10 @@ class VolumeManager(manager.CleanableManager,
                 volume.update(status_update)
                 volume.save()
             finally:
-                QUOTAS.rollback(context, old_reservations)
-                QUOTAS.rollback(context, new_reservations)
+                if old_reservations:
+                    QUOTAS.rollback(context, old_reservations)
+                if new_reservations:
+                    QUOTAS.rollback(context, new_reservations)
 
         status_update = {'status': volume.previous_status}
         if context.project_id != volume.project_id:
@@ -2831,7 +2839,7 @@ class VolumeManager(manager.CleanableManager,
         replication_diff = diff_specs.get('replication_enabled')
 
         if replication_diff:
-            is_replicated = vol_utils.is_replicated_str(replication_diff[1])
+            is_replicated = vol_utils.is_boolean_str(replication_diff[1])
             if is_replicated:
                 replication_status = fields.ReplicationStatus.ENABLED
             else:
@@ -2920,6 +2928,9 @@ class VolumeManager(manager.CleanableManager,
             if want_objects:
                 driver_entries = (objects.ManageableVolumeList.
                                   from_primitives(ctxt, driver_entries))
+        except AttributeError:
+            LOG.debug('Driver does not support listing manageable volumes.')
+            return []
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.exception("Listing manageable volumes failed, due "
@@ -3539,7 +3550,7 @@ class VolumeManager(manager.CleanableManager,
                 LOG.error("Update group "
                           "failed to %(op)s volume-%(volume_id)s: "
                           "VolumeNotFound.",
-                          {'volume_id': add_vol_ref.id,
+                          {'volume_id': add_vol,
                            'op': 'add' if add else 'remove'},
                           resource={'type': 'group',
                                     'id': group.id})
@@ -4288,6 +4299,9 @@ class VolumeManager(manager.CleanableManager,
             if want_objects:
                 driver_entries = (objects.ManageableSnapshotList.
                                   from_primitives(ctxt, driver_entries))
+        except AttributeError:
+            LOG.debug('Driver does not support listing manageable snapshots.')
+            return []
         except Exception:
             with excutils.save_and_reraise_exception():
                 LOG.exception("Listing manageable snapshots failed, due "

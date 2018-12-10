@@ -144,6 +144,49 @@ class GroupAPITestCase(test.TestCase):
 
     @mock.patch('cinder.group.api.API._cast_create_group')
     @mock.patch('cinder.group.api.API.update_quota')
+    @mock.patch('cinder.db.group_type_get')
+    @mock.patch('cinder.db.group_type_get_by_name')
+    @mock.patch('cinder.db.volume_types_get_by_name_or_id')
+    def test_create_with_uuid_format_group_type_name(
+            self, mock_volume_types_get, mock_group_type_get_by_name,
+            mock_group_type_get, mock_update_quota, mock_cast_create_group):
+        uuid_format_type_name = fake.UUID1
+        mock_volume_types_get.return_value = [{'id': fake.VOLUME_TYPE_ID}]
+        mock_group_type_get.side_effect = exception.GroupTypeNotFound(
+            group_type_id=uuid_format_type_name)
+        mock_group_type_get_by_name.return_value = {'id': fake.GROUP_TYPE_ID}
+
+        ret_group = self.group_api.create(self.ctxt, "test_group", '',
+                                          uuid_format_type_name,
+                                          [fake.VOLUME_TYPE_ID],
+                                          availability_zone='nova')
+        self.assertEqual(ret_group["group_type_id"],
+                         fake.GROUP_TYPE_ID)
+
+    @mock.patch('cinder.group.api.API._cast_create_group')
+    @mock.patch('cinder.group.api.API.update_quota')
+    @mock.patch('cinder.db.group_type_get_by_name')
+    @mock.patch('cinder.db.sqlalchemy.api._volume_type_get')
+    @mock.patch('cinder.db.sqlalchemy.api._volume_type_get_by_name')
+    def test_create_with_uuid_format_volume_type_name(
+            self, mock_vol_t_get_by_name, mock_vol_types_get_by_id,
+            mock_group_type_get, mock_update_quota, mock_cast_create_group):
+        uuid_format_name = fake.UUID1
+        mock_group_type_get.return_value = {'id': fake.GROUP_TYPE_ID}
+        volume_type = {'id': fake.VOLUME_TYPE_ID, 'name': uuid_format_name}
+        mock_vol_types_get_by_id.side_effect = exception.VolumeTypeNotFound(
+            volume_type_id=uuid_format_name)
+        mock_vol_t_get_by_name.return_value = volume_type
+        group = self.group_api.create(self.ctxt, "test_group",
+                                      "this is a test group",
+                                      "fake-grouptype-name",
+                                      [uuid_format_name],
+                                      availability_zone='nova')
+        self.assertEqual(group["volume_type_ids"],
+                         [volume_type['id']])
+
+    @mock.patch('cinder.group.api.API._cast_create_group')
+    @mock.patch('cinder.group.api.API.update_quota')
     @mock.patch('cinder.db.group_type_get_by_name')
     @mock.patch('cinder.db.volume_types_get_by_name_or_id')
     def test_create_with_multi_types(self, mock_volume_types_get,
@@ -764,3 +807,83 @@ class GroupAPITestCase(test.TestCase):
         self.assertRaises(exception.InvalidInput,
                           group_api.delete_group_snapshot,
                           self.ctxt, gsnap)
+
+    @mock.patch('cinder.volume.volume_types.get_volume_type_qos_specs',
+                return_value={'qos_specs': {}})
+    @mock.patch('cinder.scheduler.rpcapi.SchedulerAPI.create_group')
+    def test_cast_create_group(self,
+                               mock_create_group,
+                               mock_get_volume_type_qos_specs):
+        vol_type = utils.create_volume_type(self.ctxt, name='test_vol_type')
+        encryption_key_id = mock.sentinel.encryption_key_id
+        description = mock.sentinel.description
+        name = mock.sentinel.name
+        req_spec = {'volume_type': vol_type,
+                    'encryption_key_id': encryption_key_id,
+                    'description': description,
+                    'name': name}
+
+        grp_name = "test_group"
+        grp_description = "this is a test group"
+        grp_spec = {'name': grp_name,
+                    'description': grp_description}
+
+        grp = utils.create_group(self.ctxt,
+                                 group_type_id=fake.GROUP_TYPE_ID,
+                                 volume_type_ids=[vol_type.id],
+                                 availability_zone='nova')
+
+        grp_filter_properties = mock.sentinel.group_filter_properties
+        filter_properties_list = mock.sentinel.filter_properties_list
+        self.group_api._cast_create_group(self.ctxt,
+                                          grp,
+                                          grp_spec,
+                                          [req_spec],
+                                          grp_filter_properties,
+                                          filter_properties_list)
+
+        mock_get_volume_type_qos_specs.assert_called_once_with(vol_type.id)
+
+        exp_vol_properties = {
+            'size': 0,
+            'user_id': self.ctxt.user_id,
+            'project_id': self.ctxt.project_id,
+            'status': 'creating',
+            'attach_status': 'detached',
+            'encryption_key_id': encryption_key_id,
+            'display_description': description,
+            'display_name': name,
+            'volume_type_id': vol_type.id,
+            'group_type_id': grp.group_type_id,
+            'availability_zone': grp.availability_zone
+        }
+        exp_req_spec = {
+            'volume_type': vol_type,
+            'encryption_key_id': encryption_key_id,
+            'description': description,
+            'name': name,
+            'volume_properties': exp_vol_properties,
+            'qos_specs': None
+        }
+        exp_grp_properties = {
+            'size': 0,
+            'user_id': self.ctxt.user_id,
+            'project_id': self.ctxt.project_id,
+            'status': 'creating',
+            'display_description': grp_description,
+            'display_name': grp_name,
+            'group_type_id': grp.group_type_id,
+        }
+        exp_grp_spec = {
+            'name': grp_name,
+            'description': grp_description,
+            'volume_properties': exp_grp_properties,
+            'qos_specs': None
+        }
+        mock_create_group.assert_called_once_with(
+            self.ctxt,
+            grp,
+            group_spec=exp_grp_spec,
+            request_spec_list=[exp_req_spec],
+            group_filter_properties=grp_filter_properties,
+            filter_properties_list=filter_properties_list)

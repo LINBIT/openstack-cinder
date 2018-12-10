@@ -58,6 +58,18 @@ CONF = cfg.CONF
 
 LOG = logging.getLogger(__name__)
 
+GB = units.Gi
+# These attributes we will attempt to save for the volume if they exist
+# in the source image metadata.
+IMAGE_ATTRIBUTES = (
+    'checksum',
+    'container_format',
+    'disk_format',
+    'min_disk',
+    'min_ram',
+    'size',
+)
+
 
 def null_safe_str(s):
     return str(s) if s else ''
@@ -955,7 +967,7 @@ def clone_encryption_key(context, key_manager, encryption_key_id):
     return clone_key_id
 
 
-def is_replicated_str(str):
+def is_boolean_str(str):
     spec = (str or '').split()
     return (len(spec) == 2 and
             spec[0] == '<is>' and strutils.bool_from_string(spec[1]))
@@ -963,7 +975,12 @@ def is_replicated_str(str):
 
 def is_replicated_spec(extra_specs):
     return (extra_specs and
-            is_replicated_str(extra_specs.get('replication_enabled')))
+            is_boolean_str(extra_specs.get('replication_enabled')))
+
+
+def is_multiattach_spec(extra_specs):
+    return (extra_specs and
+            is_boolean_str(extra_specs.get('multiattach')))
 
 
 def group_get_by_id(group_id):
@@ -1033,3 +1050,71 @@ def make_initiator_target_all2all_map(initiator_wwpns, target_wwpns):
             i_t_map[i_wwpn].append(t_wwpn)
 
     return i_t_map
+
+
+def check_image_metadata(image_meta, vol_size):
+    """Validates the image metadata."""
+    # Check whether image is active
+    if image_meta['status'] != 'active':
+        msg = _('Image %(image_id)s is not active.'
+                ) % {'image_id': image_meta['id']}
+        raise exception.InvalidInput(reason=msg)
+
+    # Check image size is not larger than volume size.
+    image_size = utils.as_int(image_meta['size'], quiet=False)
+    image_size_in_gb = (image_size + GB - 1) // GB
+    if image_size_in_gb > vol_size:
+        msg = _('Size of specified image %(image_size)sGB'
+                ' is larger than volume size %(volume_size)sGB.')
+        msg = msg % {'image_size': image_size_in_gb, 'volume_size': vol_size}
+        raise exception.InvalidInput(reason=msg)
+
+    # Check image min_disk requirement is met for the particular volume
+    min_disk = image_meta.get('min_disk', 0)
+    if vol_size < min_disk:
+        msg = _('Volume size %(volume_size)sGB cannot be smaller'
+                ' than the image minDisk size %(min_disk)sGB.')
+        msg = msg % {'volume_size': vol_size, 'min_disk': min_disk}
+        raise exception.InvalidInput(reason=msg)
+
+
+def enable_bootable_flag(volume):
+    try:
+        LOG.debug('Marking volume %s as bootable.', volume.id)
+        volume.bootable = True
+        volume.save()
+    except exception.CinderException as ex:
+        LOG.exception("Failed updating volume %(volume_id)s bootable "
+                      "flag to true", {'volume_id': volume.id})
+        raise exception.MetadataUpdateFailure(reason=ex)
+
+
+def get_volume_image_metadata(image_id, image_meta):
+
+    # Save some base attributes into the volume metadata
+    base_metadata = {
+        'image_id': image_id,
+    }
+    name = image_meta.get('name', None)
+    if name:
+        base_metadata['image_name'] = name
+
+    # Save some more attributes into the volume metadata from the image
+    # metadata
+    for key in IMAGE_ATTRIBUTES:
+        if key not in image_meta:
+            continue
+        value = image_meta.get(key, None)
+        if value is not None:
+            base_metadata[key] = value
+
+    # Save all the image metadata properties into the volume metadata
+    property_metadata = {}
+    image_properties = image_meta.get('properties', {})
+    for (key, value) in image_properties.items():
+        if value is not None:
+            property_metadata[key] = value
+
+    volume_metadata = dict(property_metadata)
+    volume_metadata.update(base_metadata)
+    return volume_metadata

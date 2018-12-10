@@ -110,7 +110,15 @@ class API(base.Base):
             req_group_type = self.db.group_type_get_by_name(context,
                                                             group_type)
         else:
-            req_group_type = self.db.group_type_get(context, group_type)
+            try:
+                req_group_type = self.db.group_type_get(context, group_type)
+            except exception.GroupTypeNotFound:
+                # check again if we get this group type by uuid-like name
+                try:
+                    req_group_type = self.db.group_type_get_by_name(
+                        context, group_type)
+                except exception.GroupTypeNotFoundByName:
+                    raise exception.GroupTypeNotFound(group_type_id=group_type)
 
         availability_zone = self._extract_availability_zone(availability_zone)
         kwargs = {'user_id': context.user_id,
@@ -291,7 +299,6 @@ class API(base.Base):
                                  "Do not need to create again.",
                                  {'grp': group.id,
                                   'vol_type': volume_type_id})
-                        pass
 
                 # Since group snapshot is passed in, the following call will
                 # create a db entry for the volume, but will not call the
@@ -374,7 +381,6 @@ class API(base.Base):
                                  "Do not need to create again.",
                                  {'grp': group.id,
                                   'vol_type': volume_type_id})
-                        pass
 
                 # Since source_group is passed in, the following call will
                 # create a db entry for the volume, but will not call the
@@ -455,6 +461,7 @@ class API(base.Base):
                     'display_name': request_spec.get('name'),
                     'volume_type_id': volume_type_id,
                     'group_type_id': group.group_type_id,
+                    'availability_zone': group.availability_zone
                 }
 
                 request_spec['volume_properties'] = volume_properties

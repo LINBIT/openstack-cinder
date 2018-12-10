@@ -397,11 +397,7 @@ class ChunkedDriverTestCase(test.TestCase):
                                          object_meta,
                                          object_sha256)
 
-        # TODO(smcginnis): Object count is either misnamed or we use it in an
-        # odd way. We increment the object count from 1, so writing one chunk
-        # results in an object count of 2. Should probably straighten that out
-        # at some point.
-        self.assertEqual(2, self.backup.object_count)
+        self.assertEqual(1, self.backup.object_count)
 
     def test_backup_metadata(self):
         object_meta = {}
@@ -436,7 +432,7 @@ class ChunkedDriverTestCase(test.TestCase):
         self.assertEqual(50, obj_meta.get('backup_percent', 0))
         self.assertTrue(mock_notify.called)
 
-    @mock.patch('cinder.volume.utils.notify_about_backup_usage')
+    @mock.patch('cinder.tests.unit.fake_notifier.FakeNotifier._notify')
     def test_backup(self, mock_notify):
         volume_file = mock.Mock()
         volume_file.tell.side_effect = [0, len(TEST_DATA)]
@@ -445,8 +441,8 @@ class ChunkedDriverTestCase(test.TestCase):
         with mock.patch.object(self.driver, 'get_object_writer',
                                return_value=obj_writer):
             self.driver.backup(self.backup, volume_file)
-
-        mock_notify.assert_called()
+        self.assert_notify_called(mock_notify,
+                                  (['INFO', 'backup.createprogress'],))
 
     def test_backup_invalid_size(self):
         self.driver.chunk_size_bytes = 999

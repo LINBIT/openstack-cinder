@@ -38,8 +38,8 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - updated: updated
-   - description: description_7
+   - updated: updated_at
+   - description: description_extn
    - links: links
    - namespace: namespace
    - alias: alias

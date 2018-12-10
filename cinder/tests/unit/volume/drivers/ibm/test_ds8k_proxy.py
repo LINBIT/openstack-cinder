@@ -1106,6 +1106,7 @@ class DS8KProxyTest(test.TestCase):
         self.storage_info = mock.MagicMock()
         self.logger = mock.MagicMock()
         self.exception = mock.MagicMock()
+        self.patch('eventlet.sleep')
 
     def _create_volume(self, **kwargs):
         properties = {
@@ -1751,7 +1752,7 @@ class DS8KProxyTest(test.TestCase):
         self.assertTrue(mock_switch_connection.called)
 
     def test_find_lcu_for_eckd_replicated_volume(self):
-        """find LCU for eckd replicated volume when pprc path is availble."""
+        """find LCU for eckd replicated volume when pprc path is available."""
         self.configuration.connection_type = (
             storage.XIV_CONNECTION_TYPE_FC_ECKD)
         self.configuration.ds8k_devadd_unitadd_mapping = 'C4-10'

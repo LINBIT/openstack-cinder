@@ -101,8 +101,8 @@ Request
    - project_id: project_id_path
    - volume_id: volume_id_path
    - os-reset_status: os-reset_status
-   - status: status_3
-   - migration_status: migration_status_1
+   - status: status_vol
+   - migration_status: migration_status
    - attach_status: attach_status
 
 Request Example
@@ -144,7 +144,7 @@ Request
    - project_id: project_id_path
    - volume_id: volume_id_path
    - revert: revert
-   - snapshot_id: snapshot_id_4
+   - snapshot_id: snapshot_id_revert
 
 Request Example
 ---------------
@@ -176,7 +176,7 @@ Request
    - project_id: project_id_path
    - volume_id: volume_id_path
    - os-set_image_metadata: os-set_image_metadata
-   - metadata: metadata_5
+   - metadata: metadata_image
 
 Request Example
 ---------------
@@ -254,7 +254,7 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - metadata: metadata_5
+   - metadata: metadata_image
 
 Response Example
 ----------------
@@ -464,6 +464,73 @@ Request Example
    :language: javascript
 
 
+Migrate a volume
+~~~~~~~~~~~~~~~~
+
+.. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
+
+Specify the ``os-migrate_volume`` action in the request body.
+
+Migrates a volume to the specified host. Starting with the
+`3.16 microversion`_ a cluster can be specified instead of a host.
+
+It is generally not recommended to migrate an *in-use* multiattach volume if
+that volume has more than one active read/write attachment.
+
+Policy defaults enable only users with the administrative role to perform this
+operation. Cloud providers can change these permissions through the
+policy.json file.
+
+.. _3.16 microversion: https://docs.openstack.org/cinder/latest/contributor/api_microversion_history.html#id15
+
+**Preconditions**
+
+* The volume ``status`` must be ``available`` or ``in-use``.
+* The volume ``migration_status`` must be ``None``, ``deleting``, ``error``,
+  or ``success``.
+* The volume ``replication_status`` must be ``None``, ``disabled`` or
+  ``not-capable``.
+* The migration must happen to another host (or cluster) from which the
+  volume currently resides.
+* The volume must not be a member of a group.
+* The volume must not have snapshots.
+
+**Asynchronous Postconditions**
+
+On success, the volume ``status`` will return to its original status of
+``available`` or ``in-use`` and the ``migration_status`` will be ``success``.
+On failure, the ``migration_status`` will be ``error``. In the case of failure,
+if ``lock_volume`` was true and the volume was originally ``available`` when
+it was migrated, the ``status`` will go back to ``available``.
+
+Response codes
+--------------
+
+.. rest_status_code:: success ../status.yaml
+
+   - 202
+
+
+Request
+-------
+
+.. rest_parameters:: parameters.yaml
+
+   - volume_id: volume_id_path
+   - project_id: project_id_path
+   - os-migrate_volume: os-migrate_volume
+   - host: migrate_host
+   - force_host_copy: migrate_force_host_copy
+   - lock_volume: migrate_lock_volume
+   - cluster: migrate_cluster
+
+Request Example
+---------------
+
+.. literalinclude:: ./samples/volume-os-migrate_volume-request.json
+   :language: javascript
+
+
 Force delete a volume
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -520,7 +587,7 @@ Request
    - project_id: project_id_path
    - volume_id: volume_id_path
    - os-set_bootable: os-set_bootable
-   - bootable: bootable
+   - bootable: bootable_required
 
 Request Example
 ---------------
@@ -553,10 +620,10 @@ Request
    - volume_id: volume_id_path
    - os-volume_upload_image: os-volume_upload_image
    - image_name: image_name
-   - force: force_4
+   - force: force_upload_vol
    - disk_format: disk_format
    - container_format: container_format
-   - visibility: visibility_1
+   - visibility: visibility_min
    - protected: protected
 
 Request Example
@@ -571,18 +638,18 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - os-volume_upload_image: os-volume_upload_image
-   - status: status_3
+   - status: status_vol
    - image_name: image_name
    - disk_format: disk_format
    - container_format: container_format
-   - visibility: visibility_1
+   - visibility: visibility_min
    - protected: protected
    - updated_at: updated_at
    - image_id: image_id
-   - display_description: description_9
-   - id: id_5
+   - display_description: description_vol_req
+   - id: id_vol
    - size: size
-   - volume_type: volume_type_6
+   - volume_type: volume_type_vol
 
 
 Response Example

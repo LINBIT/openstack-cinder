@@ -400,7 +400,7 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
                                " %(src_id)s metadata")
         src_type = None
         src_id = None
-        self._enable_bootable_flag(context, volume)
+        volume_utils.enable_bootable_flag(volume)
         try:
             if kwargs.get('snapshot_id'):
                 src_type = 'snapshot'
@@ -471,16 +471,6 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
                                                      snapshot_id=snapshot_id)
         return model_update
 
-    def _enable_bootable_flag(self, context, volume):
-        try:
-            LOG.debug('Marking volume %s as bootable.', volume.id)
-            volume.bootable = True
-            volume.save()
-        except exception.CinderException as ex:
-            LOG.exception("Failed updating volume %(volume_id)s bootable "
-                          "flag to true", {'volume_id': volume.id})
-            raise exception.MetadataUpdateFailure(reason=ex)
-
     def _create_from_source_volume(self, context, volume, source_volid,
                                    **kwargs):
         # NOTE(harlowja): if the source volume has disappeared this will be our
@@ -538,10 +528,10 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
                           {'volume_id': volume.id})
             raise exception.ImageUnacceptable(ex)
         except exception.ImageTooBig as ex:
-            LOG.exception("Failed to copy image %(image_id)s to volume: "
-                          "%(volume_id)s",
-                          {'volume_id': volume.id, 'image_id': image_id})
-            excutils.save_and_reraise_exception()
+            with excutils.save_and_reraise_exception():
+                LOG.exception("Failed to copy image %(image_id)s to volume: "
+                              "%(volume_id)s",
+                              {'volume_id': volume.id, 'image_id': image_id})
         except Exception as ex:
             LOG.exception("Failed to copy image %(image_id)s to "
                           "volume: %(volume_id)s",
@@ -558,33 +548,8 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
 
     def _capture_volume_image_metadata(self, context, volume_id,
                                        image_id, image_meta):
-
-        # Save some base attributes into the volume metadata
-        base_metadata = {
-            'image_id': image_id,
-        }
-        name = image_meta.get('name', None)
-        if name:
-            base_metadata['image_name'] = name
-
-        # Save some more attributes into the volume metadata from the image
-        # metadata
-        for key in IMAGE_ATTRIBUTES:
-            if key not in image_meta:
-                continue
-            value = image_meta.get(key, None)
-            if value is not None:
-                base_metadata[key] = value
-
-        # Save all the image metadata properties into the volume metadata
-        property_metadata = {}
-        image_properties = image_meta.get('properties', {})
-        for (key, value) in image_properties.items():
-            if value is not None:
-                property_metadata[key] = value
-
-        volume_metadata = dict(property_metadata)
-        volume_metadata.update(base_metadata)
+        volume_metadata = volume_utils.get_volume_image_metadata(
+            image_id, image_meta)
         LOG.debug("Creating volume glance metadata for volume %(volume_id)s"
                   " backed by image %(image_id)s with: %(vol_metadata)s.",
                   {'volume_id': volume_id, 'image_id': image_id,
@@ -971,7 +936,8 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
                      "at the backend and then schedule the request to the "
                      "backup service to restore the volume with backup.",
                      {'id': backup_id})
-            model_update = self._create_raw_volume(volume, **kwargs) or {}
+            model_update = self._create_raw_volume(
+                context, volume, **kwargs) or {}
             volume.update(model_update)
             volume.save()
 
@@ -993,9 +959,17 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
                   'backup_id': backup_id})
         return ret, need_update_volume
 
-    def _create_raw_volume(self, volume, **kwargs):
+    def _create_raw_volume(self, context, volume, **kwargs):
         try:
             ret = self.driver.create_volume(volume)
+        except Exception as ex:
+            with excutils.save_and_reraise_exception():
+                self.message.create(
+                    context,
+                    message_field.Action.CREATE_VOLUME_FROM_BACKEND,
+                    resource_uuid=volume.id,
+                    detail=message_field.Detail.DRIVER_FAILED_CREATE,
+                    exception=ex)
         finally:
             self._cleanup_cg_in_volume(volume)
         return ret
@@ -1028,7 +1002,8 @@ class CreateVolumeFromSpecTask(flow_utils.CinderTask):
                  {'volume_spec': volume_spec, 'volume_id': volume_id,
                   'create_type': create_type})
         if create_type == 'raw':
-            model_update = self._create_raw_volume(volume, **volume_spec)
+            model_update = self._create_raw_volume(
+                context, volume, **volume_spec)
         elif create_type == 'snap':
             model_update = self._create_from_snapshot(context, volume,
                                                       **volume_spec)

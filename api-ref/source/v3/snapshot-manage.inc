@@ -39,10 +39,10 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - snapshot: snapshot_1
-   - description: description_4
-   - metadata: metadata_7
-   - name: name_5
+   - snapshot: snapshot_obj
+   - description: description_snap
+   - metadata: metadata_snap
+   - name: name_snap
    - ref: ref
    - volume_id: volume_id
 
@@ -52,6 +52,28 @@ Request Example
 .. literalinclude:: ./samples/snapshot-manage-request.json
    :language: javascript
 
+
+Response
+--------
+
+.. rest_parameters:: parameters.yaml
+
+  - snapshot: snapshot_obj
+  - status: status_snap
+  - size: size
+  - metadata: metadata_snap
+  - name: name_snap
+  - volume_id: volume_id
+  - created_at: created_at
+  - description: description_snap_req
+  - id: id
+  - updated_at: updated_at
+
+Response Example
+----------------
+
+.. literalinclude:: ./samples/snapshot-manage-response.json
+   :language: javascript
 
 
 List summary of snapshots available to manage

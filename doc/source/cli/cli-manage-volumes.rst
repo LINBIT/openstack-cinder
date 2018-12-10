@@ -34,11 +34,11 @@ This example creates a ``my-new-volume`` volume based on an image.
    .. code-block:: console
 
       $ openstack availability zone list
-      +------+-----------+
-      | Name |   Status  |
-      +------+-----------+
-      | nova | available |
-      +------+-----------+
+      +-----------+-------------+
+      | Zone Name | Zone Status |
+      +-----------+-------------+
+      | nova      | available   |
+      +-----------+-------------+
 
 #. Create a volume with 8 gibibytes (GiB) of space, and specify the
    availability zone and image:
@@ -80,7 +80,7 @@ This example creates a ``my-new-volume`` volume based on an image.
 
       $ openstack volume list
       +--------------------------------------+---------------+-----------+------+-------------+
-      | ID                                   | DisplayName   |  Status   | Size | Attached to |
+      | ID                                   | Name          |  Status   | Size | Attached to |
       +--------------------------------------+---------------+-----------+------+-------------+
       | bab4b0e0-ce3d-4d57-bf57-3c51319f5202 | my-new-volume | available | 8    |             |
       +--------------------------------------+---------------+-----------+------+-------------+
@@ -333,7 +333,7 @@ Delete a volume
 
       $ openstack volume list
       +----------------+-----------------+-----------+------+-------------+
-      |       ID       |   Display Name  |  Status   | Size | Attached to |
+      |       ID       |   Name          |  Status   | Size | Attached to |
       +----------------+-----------------+-----------+------+-------------+
       | 573e024d-52... |  my-new-volume  |  deleting |  8   |             |
       | bd7cf584-45... | my-bootable-vol | available |  8   |             |
@@ -346,7 +346,7 @@ Delete a volume
 
       $ openstack volume list
       +----------------+-----------------+-----------+------+-------------+
-      |       ID       |   Display Name  |  Status   | Size | Attached to |
+      |       ID       |   Name          |  Status   | Size | Attached to |
       +----------------+-----------------+-----------+------+-------------+
       | bd7cf584-45... | my-bootable-vol | available |  8   |             |
       +----------------+-----------------+-----------+------+-------------+
@@ -372,7 +372,7 @@ Resize a volume
 
       $ openstack volume list
       +----------------+-----------------+-----------+------+-------------+
-      |       ID       |   Display Name  |  Status   | Size | Attached to |
+      |       ID       |   Name          |  Status   | Size | Attached to |
       +----------------+-----------------+-----------+------+-------------+
       | 573e024d-52... |  my-new-volume  | available |  8   |             |
       | bd7cf584-45... | my-bootable-vol | available |  8   |             |
@@ -449,13 +449,15 @@ donor, or original owner, creates a transfer request and sends the created
 transfer ID and authorization key to the volume recipient. The volume
 recipient, or new owner, accepts the transfer by using the ID and key.
 
-In Rocky, Cinder changes the API behavior for V2 and 3.x < 3.55, snapshots will
-be transferred with volume by default. That means if the volume has some
-snapshots, when a user transfers a volume from one owner to another, then those
-snapshots will be transferred with the volume as well. After microversion 3.55,
-Cinder supports the ability to transfer volume without snapshots. If users
-don't want to transfer snapshots, they need to specify the new optional
-argument `--no_snapshots`.
+Starting with the Rocky release, Cinder changes the API behavior for the v2 and
+v3 API up to microversion 3.55. Snapshots will be transferred with the volume
+by default. That means if the volume has some snapshots, when a user transfers
+a volume from one owner to another, then those snapshots will be transferred
+with the volume as well.
+
+Starting with microversion 3.55 and later, Cinder supports the ability to
+transfer volume without snapshots. If users don't want to transfer snapshots,
+they need to specify the new optional argument `--no-snapshots`.
 
 .. note::
 
@@ -480,7 +482,7 @@ Create a volume transfer request
 
       $ openstack volume list
       +-----------------+-----------------+-----------+------+-------------+
-      |       ID        |   Display Name  |  Status   | Size | Attached to |
+      |       ID        |   Name          |  Status   | Size | Attached to |
       +-----------------+-----------------+-----------+------+-------------+
       | 72bfce9f-cac... |       None      |   error   |  1   |             |
       | a1cdace0-08e... |       None      | available |  1   |             |
@@ -602,7 +604,7 @@ Delete a volume transfer
 
       $ openstack volume list
       +-----------------+-----------------+-----------------+------+-------------+
-      |       ID        |   Display Name  |      Status     | Size | Attached to |
+      |       ID        |   Name          |      Status     | Size | Attached to |
       +-----------------+-----------------+-----------------+------+-------------+
       | 72bfce9f-cac... |       None      |      error      |  1   |             |
       | a1cdace0-08e... |       None      |awaiting-transfer|  1   |             |
@@ -649,12 +651,12 @@ Delete a volume transfer
    .. code-block:: console
 
       $ openstack volume list
-      +-----------------+-----------+--------------+------+-------------+----------+-------------+
-      |       ID        |   Status  | Display Name | Size | Volume Type | Bootable | Attached to |
-      +-----------------+-----------+--------------+------+-------------+----------+-------------+
-      | 72bfce9f-ca...  |   error   |     None     |  1   |     None    |  false   |             |
-      | a1cdace0-08...  | available |     None     |  1   |     None    |  false   |             |
-      +-----------------+-----------+--------------+------+-------------+----------+-------------+
+      +-----------------+-----------------+-----------------+------+-------------+
+      |       ID        |   Name          |      Status     | Size | Attached to |
+      +-----------------+-----------------+-----------------+------+-------------+
+      | 72bfce9f-cac... |       None      |      error      |  1   |             |
+      | a1cdace0-08e... |       None      |    available    |  1   |             |
+      +-----------------+-----------------+-----------------+------+-------------+
 
 Manage and unmanage a snapshot
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

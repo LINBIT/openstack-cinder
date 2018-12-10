@@ -411,7 +411,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
                                         client=client.cluster,
                                         ioctx=client.ioctx) as v:
                         size = v.size()
-                except self.rbd.ImageNotFound:
+                except (self.rbd.ImageNotFound, self.rbd.OSError):
                     LOG.debug("Image %s is not found.", t)
                 else:
                     total_provisioned += size
@@ -1002,8 +1002,8 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
                              "if so, may be resolved by retrying the delete "
                              "after 30 seconds has elapsed."))
                     LOG.warning(msg)
-                    # Now raise this so that volume stays available so that we
-                    # delete can be retried.
+                    # Now raise this so that the volume stays available and the
+                    # deletion can be retried.
                     raise exception.VolumeIsBusy(msg, volume_name=volume_name)
                 except self.rbd.ImageNotFound:
                     LOG.info("RBD volume %s not found, allowing delete "
@@ -1623,7 +1623,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
                 self.RBDProxy().rename(client.ioctx,
                                        utils.convert_str(existing_name),
                                        utils.convert_str(wanted_name))
-            except self.rbd.ImageNotFound:
+            except (self.rbd.ImageNotFound, self.rbd.ImageExists):
                 LOG.error('Unable to rename the logical volume '
                           'for volume %s.', volume.id)
                 # If the rename fails, _name_id should be set to the new
@@ -1837,7 +1837,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
         the volume.
         """
 
-        if not backup.service.endswith('ceph') or backup.snapshot_id:
+        if not ('backup.drivers.ceph' in backup.service) or backup.snapshot_id:
             return super(RBDDriver, self).get_backup_device(context, backup)
 
         volume = objects.Volume.get_by_id(context, backup.volume_id)

@@ -2611,7 +2611,7 @@ port_speed!N/A
 
         if 'linkbandwidthmbits' not in kwargs:
             return self._errors['CMMVC5707E']
-        bandwith = kwargs['linkbandwidthmbits'].strip('\'\"')
+        bandwidth = kwargs['linkbandwidthmbits'].strip('\'\"')
 
         if 'backgroundcopyrate' not in kwargs:
             return self._errors['CMMVC5707E']
@@ -2632,7 +2632,7 @@ port_speed!N/A
         partner_info['cluster_ip'] = clusterip
         partner_info['event_log_sequence'] = ''
         partner_info['chap_secret'] = ''
-        partner_info['linkbandwidthmbits'] = bandwith
+        partner_info['linkbandwidthmbits'] = bandwidth
         partner_info['backgroundcopyrate'] = copyrate
         partner_info['partnership'] = 'fully_configured'
 
@@ -2646,7 +2646,7 @@ port_speed!N/A
 
         if 'linkbandwidthmbits' not in kwargs:
             return self._errors['CMMVC5707E']
-        bandwith = kwargs['linkbandwidthmbits'].strip('\'\"')
+        bandwidth = kwargs['linkbandwidthmbits'].strip('\'\"')
 
         if 'backgroundcopyrate' not in kwargs:
             return self._errors['CMMVC5707E']
@@ -2660,7 +2660,7 @@ port_speed!N/A
         partner_info['cluster_ip'] = ''
         partner_info['event_log_sequence'] = ''
         partner_info['chap_secret'] = ''
-        partner_info['linkbandwidthmbits'] = bandwith
+        partner_info['linkbandwidthmbits'] = bandwidth
         partner_info['backgroundcopyrate'] = copyrate
         partner_info['partnership'] = 'fully_configured'
         self._partnership_list[partner_info['id']] = partner_info
@@ -6100,8 +6100,8 @@ class StorwizeSVCCommonDriverTestCase(test.TestCase):
         self.driver._check_volume_copy_ops()
         self.driver._rm_vdisk_copy_op(ctxt, volume, new_ops[0], new_ops[1])
         admin_metadata = self.db.volume_admin_metadata_get(ctxt, volume['id'])
-        self.assertIsNone(admin_metadata.get('vdiskcopyops', None),
-                          'Storwize driver delete vdisk copy error')
+        self.assertNotIn('vdiskcopyops', admin_metadata,
+                         'Storwize driver delete vdisk copy error')
         self._delete_volume(volume)
 
     def test_storwize_delete_with_vdisk_copy_ops(self):

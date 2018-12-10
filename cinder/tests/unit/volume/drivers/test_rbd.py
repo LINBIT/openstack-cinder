@@ -69,6 +69,10 @@ class MockImageExistsException(MockException):
     """Used as mock for rbd.ImageExists."""
 
 
+class MockOSErrorException(MockException):
+    """Used as mock for rbd.OSError."""
+
+
 class KeyObject(object):
     def get_encoded(arg):
         return "asdf".encode('utf-8')
@@ -1688,6 +1692,26 @@ class RBDTestCase(test.TestCase):
             self.assertEqual({'_name_id': None,
                               'provider_location': None}, model_update)
 
+    @common_mocks
+    def test_update_migrated_volume_image_exists(self):
+        client = self.mock_client.return_value
+        client.__enter__.return_value = client
+
+        with mock.patch.object(self.driver.rbd.RBD(), 'rename') as mock_rename:
+            context = {}
+            mock_rename.return_value = 1
+            mock_rename.side_effect = MockImageExistsException
+
+            model_update = self.driver.update_migrated_volume(context,
+                                                              self.volume_a,
+                                                              self.volume_b,
+                                                              'available')
+            mock_rename.assert_called_with(client.ioctx,
+                                           'volume-%s' % self.volume_b.id,
+                                           'volume-%s' % self.volume_a.id)
+            self.assertEqual({'_name_id': self.volume_b.id,
+                              'provider_location': None}, model_update)
+
     def test_rbd_volume_proxy_init(self):
         mock_driver = mock.Mock(name='driver')
         mock_driver._connect_to_rados.return_value = (None, None)
@@ -2081,17 +2105,24 @@ class RBDTestCase(test.TestCase):
             return mock.Mock(return_value=mock.Mock(
                 size=mock.Mock(side_effect=(size_or_exc,))))
 
-        volumes = ['volume-1', 'non-existent', 'non-cinder-volume']
+        volumes = [
+            'volume-1',
+            'non-existent',
+            'non-existent',
+            'non-cinder-volume'
+        ]
 
         client = client_mock.return_value.__enter__.return_value
         rbdproxy_mock.return_value.list.return_value = volumes
 
         with mock.patch.object(self.driver, 'rbd',
-                               ImageNotFound=MockImageNotFoundException):
+                               ImageNotFound=MockImageNotFoundException,
+                               OSError=MockOSErrorException):
             volproxy_mock.side_effect = [
                 mock.MagicMock(**{'__enter__': FakeVolProxy(s)})
                 for s in (1.0 * units.Gi,
                           self.driver.rbd.ImageNotFound,
+                          self.driver.rbd.OSError,
                           2.0 * units.Gi)
             ]
             total_provision = self.driver._get_usage_info()
@@ -2245,7 +2276,7 @@ class RBDTestCase(test.TestCase):
 
         self._create_backup_db_entry(fake.BACKUP_ID, self.volume_a['id'], 1)
         backup = objects.Backup.get_by_id(self.context, fake.BACKUP_ID)
-        backup.service = 'asdf#ceph'
+        backup.service = 'cinder.backup.drivers.ceph'
 
         ret = driver.get_backup_device(self.context, backup)
         self.assertEqual(ret, (self.volume_a, False))

@@ -291,6 +291,7 @@ class CopyVolumeToImageTestCase(base.BaseVolumeTestCase):
 
         # creating volume testdata
         self.volume_attrs['instance_uuid'] = None
+        self.volume_attrs['snapshot_id'] = fake.SNAPSHOT_ID
         db.volume_create(self.context, self.volume_attrs)
 
         def fake_create(context, volume, **kwargs):
@@ -314,6 +315,12 @@ class CopyVolumeToImageTestCase(base.BaseVolumeTestCase):
     def test_copy_volume_to_image_with_image_volume(self):
         image = self._test_copy_volume_to_image_with_image_volume()
         self.assertTrue(image['locations'][0]['url'].startswith('cinder://'))
+        image_volume_id = image['locations'][0]['url'][9:]
+        # The image volume does NOT include the snapshot_id, and include the
+        # source_volid which is the uploaded-volume id.
+        vol_ref = db.volume_get(self.context, image_volume_id)
+        self.assertIsNone(vol_ref['snapshot_id'])
+        self.assertEqual(vol_ref['source_volid'], self.volume_id)
 
     def test_copy_volume_to_image_with_image_volume_qcow2(self):
         self.image_meta['disk_format'] = 'qcow2'
@@ -560,6 +567,27 @@ class ImageVolumeTestCases(base.BaseVolumeTestCase):
         # was called.
         self.assertFalse(mock_delete.called)
 
+    @mock.patch('cinder.image.image_utils.qemu_img_info')
+    def test_create_volume_from_image_with_img_too_big(
+            self, mock_qemu_info):
+        """Test create volume with ImageCopyFailure
+
+        This exception should not trigger rescheduling and allocated_capacity
+        should be incremented so we're having assert for that here.
+        """
+        image_info = imageutils.QemuImgInfo()
+        image_info.virtual_size = '1073741824'
+        mock_qemu_info.return_value = image_info
+
+        def fake_copy_image_to_volume(context, volume, image_service,
+                                      image_id):
+            raise exception.ImageTooBig(image_id=image_id, reason='')
+
+        self.mock_object(self.volume.driver, 'copy_image_to_volume',
+                         fake_copy_image_to_volume)
+        self.assertRaises(exception.ImageTooBig,
+                          self._create_volume_from_image)
+
     @mock.patch('cinder.utils.brick_get_connector_properties')
     @mock.patch('cinder.utils.brick_get_connector')
     @mock.patch('cinder.volume.driver.BaseVD.secure_file_operations_enabled')
@@ -692,7 +720,8 @@ class ImageVolumeTestCases(base.BaseVolumeTestCase):
                         'disk_format': 'raw',
                         'container_format': 'bare',
                         'min_disk': 5,
-                        'status': 'deleted'}
+                        'status': 'deleted',
+                        'id': image_id}
 
         volume_api = cinder.volume.api.API(
             image_service=_ModifiedFakeImageService())

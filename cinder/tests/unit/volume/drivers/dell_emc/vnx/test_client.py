@@ -15,18 +15,18 @@
 import unittest
 
 from cinder import exception
-from cinder import test
 from cinder.tests.unit.volume.drivers.dell_emc.vnx import fake_exception \
     as storops_ex
 from cinder.tests.unit.volume.drivers.dell_emc.vnx import fake_storops \
     as storops
 from cinder.tests.unit.volume.drivers.dell_emc.vnx import res_mock
+from cinder.tests.unit.volume.drivers.dell_emc.vnx import test_base
 from cinder.tests.unit.volume.drivers.dell_emc.vnx import utils
 from cinder.volume.drivers.dell_emc.vnx import client as vnx_client
 from cinder.volume.drivers.dell_emc.vnx import common as vnx_common
 
 
-class TestCondition(test.TestCase):
+class TestCondition(test_base.TestCase):
     @res_mock.patch_client
     def test_is_lun_io_ready_false(self, client, mocked):
         r = vnx_client.Condition.is_lun_io_ready(mocked['lun'])
@@ -44,17 +44,7 @@ class TestCondition(test.TestCase):
                           mocked['lun'])
 
 
-class TestClient(test.TestCase):
-    def setUp(self):
-        super(TestClient, self).setUp()
-        self.origin_timeout = vnx_common.DEFAULT_TIMEOUT
-        vnx_common.DEFAULT_TIMEOUT = 0
-        vnx_common.INTERVAL_30_SEC = 0
-
-    def tearDown(self):
-        super(TestClient, self).tearDown()
-        vnx_common.DEFAULT_TIMEOUT = self.origin_timeout
-        vnx_common.INTERVAL_30_SEC = 30
+class TestClient(test_base.TestCase):
 
     @res_mock.patch_client
     def test_create_lun(self, client, mocked):
@@ -186,9 +176,9 @@ class TestClient(test.TestCase):
 
     @res_mock.patch_client
     def test_delete_lun_exception(self, client, mocked):
-        self.assertRaisesRegexp(storops_ex.VNXDeleteLunError,
-                                'General lun delete error.',
-                                client.delete_lun, mocked['lun'].name)
+        self.assertRaisesRegex(storops_ex.VNXDeleteLunError,
+                               'General lun delete error.',
+                               client.delete_lun, mocked['lun'].name)
 
     @res_mock.patch_client
     def test_cleanup_async_lun(self, client, mocked):
@@ -374,12 +364,12 @@ class TestClient(test.TestCase):
 
     @res_mock.patch_client
     def test_add_lun_to_sg_alu_in_use(self, client, mocked):
-        self.assertRaisesRegexp(storops_ex.VNXNoHluAvailableError,
-                                'No HLU available.',
-                                client.add_lun_to_sg,
-                                mocked['sg'],
-                                mocked['lun'],
-                                3)
+        self.assertRaisesRegex(storops_ex.VNXNoHluAvailableError,
+                               'No HLU available.',
+                               client.add_lun_to_sg,
+                               mocked['sg'],
+                               mocked['lun'],
+                               3)
 
     @res_mock.patch_client
     def test_update_consistencygroup_no_lun_in_cg(self, client, mocked):

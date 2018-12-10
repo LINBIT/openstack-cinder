@@ -450,8 +450,8 @@ class TestCinderManageCmd(test.TestCase):
                                  command.online_data_migrations, 10)
         self.assertEqual(1, exit.code)
         expected = """\
-5 rows matched query mock_mig_1, 4 migrated, 1 remaining
-6 rows matched query mock_mig_2, 6 migrated, 0 remaining
+5 rows matched query mock_mig_1, 4 migrated
+6 rows matched query mock_mig_2, 6 migrated
 +------------+--------------+-----------+
 | Migration  | Total Needed | Completed |
 +------------+--------------+-----------+
@@ -465,6 +465,78 @@ class TestCinderManageCmd(test.TestCase):
                                                                  6)])
 
         self.assertEqual(expected, sys.stdout.getvalue())
+
+    @mock.patch('cinder.context.get_admin_context')
+    def test_online_migrations_no_max_count(self, mock_get_context):
+        self.useFixture(fixtures.MonkeyPatch('sys.stdout', StringIO()))
+        fake_remaining = [120]
+
+        def fake_migration(context, count):
+            self.assertEqual(mock_get_context.return_value, context)
+            found = 120
+            done = min(fake_remaining[0], count)
+            fake_remaining[0] -= done
+            return found, done
+
+        command_cls = self._fake_db_command((fake_migration,))
+        command = command_cls()
+
+        exit = self.assertRaises(SystemExit,
+                                 command.online_data_migrations, None)
+        self.assertEqual(0, exit.code)
+        expected = """\
+Running batches of 50 until complete.
+120 rows matched query fake_migration, 50 migrated
+120 rows matched query fake_migration, 50 migrated
+120 rows matched query fake_migration, 20 migrated
+120 rows matched query fake_migration, 0 migrated
++----------------+--------------+-----------+
+|   Migration    | Total Needed | Completed |
++----------------+--------------+-----------+
+| fake_migration |     120      |    120    |
++----------------+--------------+-----------+
+"""
+        self.assertEqual(expected, sys.stdout.getvalue())
+
+    @mock.patch('cinder.context.get_admin_context')
+    def test_online_migrations_error(self, mock_get_context):
+        self.useFixture(fixtures.MonkeyPatch('sys.stdout', StringIO()))
+        good_remaining = [50]
+
+        def good_migration(context, count):
+            self.assertEqual(mock_get_context.return_value, context)
+            found = 50
+            done = min(good_remaining[0], count)
+            good_remaining[0] -= done
+            return found, done
+
+        bad_migration = mock.MagicMock()
+        bad_migration.side_effect = test.TestingException
+        bad_migration.__name__ = 'bad_migration'
+
+        command_cls = self._fake_db_command((bad_migration, good_migration))
+        command = command_cls()
+
+        # bad_migration raises an exception, but it could be because
+        # good_migration had not completed yet. We should get 1 in this case,
+        # because some work was done, and the command should be reiterated.
+        exit = self.assertRaises(SystemExit,
+                                 command.online_data_migrations, max_count=50)
+        self.assertEqual(1, exit.code)
+
+        # When running this for the second time, there's no work left for
+        # good_migration to do, but bad_migration still fails - should
+        # get 2 this time.
+        exit = self.assertRaises(SystemExit,
+                                 command.online_data_migrations, max_count=50)
+        self.assertEqual(2, exit.code)
+
+        # When --max-count is not used, we should get 2 if all possible
+        # migrations completed but some raise exceptions
+        good_remaining = [50]
+        exit = self.assertRaises(SystemExit,
+                                 command.online_data_migrations, None)
+        self.assertEqual(2, exit.code)
 
     @mock.patch('cinder.cmd.manage.DbCommands.online_migrations',
                 (mock.Mock(side_effect=((2, 2), (0, 0)), __name__='foo'),))
@@ -1532,8 +1604,8 @@ class TestCinderRtstoolCmd(test.TestCase):
 
         regexp = (r'targetcli not installed and could not create default '
                   r'directory \(dirname\): error$')
-        self.assertRaisesRegexp(cinder_rtstool.RtstoolError, regexp,
-                                cinder_rtstool.save_to_file, None)
+        self.assertRaisesRegex(cinder_rtstool.RtstoolError, regexp,
+                               cinder_rtstool.save_to_file, None)
 
     @mock.patch.object(cinder_rtstool, 'os', autospec=True)
     @mock.patch.object(cinder_rtstool, 'rtslib_fb', autospec=True)
@@ -1541,8 +1613,8 @@ class TestCinderRtstoolCmd(test.TestCase):
         save = mock_rtslib.root.RTSRoot.return_value.save_to_file
         save.side_effect = OSError('error')
         regexp = r'Could not save configuration to myfile: error'
-        self.assertRaisesRegexp(cinder_rtstool.RtstoolError, regexp,
-                                cinder_rtstool.save_to_file, 'myfile')
+        self.assertRaisesRegex(cinder_rtstool.RtstoolError, regexp,
+                               cinder_rtstool.save_to_file, 'myfile')
 
     @mock.patch.object(cinder_rtstool, 'rtslib_fb',
                        **{'root.default_save_file': mock.sentinel.filename})
@@ -2190,80 +2262,66 @@ class TestVolumeSharedTargetsOnlineMigration(test.TestCase):
         self.patch('cinder.objects.Service.get_minimum_rpc_version',
                    side_effect=_get_minimum_rpc_version_mock)
 
-    @mock.patch('cinder.objects.Service.get_minimum_obj_version',
-                return_value='1.8')
-    def test_shared_targets_migrations(self, mock_version):
-        """Ensure we can update the column."""
         ctxt = context.get_admin_context()
-        sqlalchemy_api.volume_create(
-            ctxt,
-            {'host': 'host1@lvm-driver1#lvm-driver1',
-             'service_uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'})
+        # default value in db for shared_targets on a volume
+        # is True, so don't need to set it here explicitly
+        for i in range(3):
+            sqlalchemy_api.volume_create(
+                ctxt,
+                {'host': 'host1@lvm-driver1#lvm-driver1',
+                 'service_uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'})
 
-        # Create another one correct setting
-        sqlalchemy_api.volume_create(
-            ctxt,
-            {'host': 'host1@lvm-driver1#lvm-driver1',
-             'shared_targets': False,
-             'service_uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'})
-
-        # Need a service to query
         values = {
             'host': 'host1@lvm-driver1',
             'binary': constants.VOLUME_BINARY,
             'topic': constants.VOLUME_TOPIC,
             'uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'}
         utils.create_service(ctxt, values)
+        self.ctxt = ctxt
 
+    @mock.patch('cinder.objects.Service.get_minimum_obj_version',
+                return_value='1.8')
+    def test_shared_targets_migrations(self, mock_version):
+        """Ensure we can update the column."""
         # Run the migration and verify that we updated 1 entry
         with mock.patch('cinder.volume.rpcapi.VolumeAPI.get_capabilities',
-                        return_value={'shared_targets': False}):
+                        return_value={'connection_protocol': 'iSCSI',
+                                      'shared_targets': False}):
             total, updated = (
                 cinder_manage.shared_targets_online_data_migration(
-                    ctxt, 10))
-            self.assertEqual(1, total)
-            self.assertEqual(1, updated)
+                    self.ctxt, 10))
+            self.assertEqual(3, total)
+            self.assertEqual(3, updated)
+
+    @mock.patch('cinder.objects.Service.get_minimum_obj_version',
+                return_value='1.8')
+    def test_shared_targets_migrations_non_iscsi(self, mock_version):
+        """Ensure we can update the column."""
+        # Run the migration and verify that we updated 1 entry
+        with mock.patch('cinder.volume.rpcapi.VolumeAPI.get_capabilities',
+                        return_value={'connection_protocol': 'RBD'}):
+            total, updated = (
+                cinder_manage.shared_targets_online_data_migration(
+                    self.ctxt, 10))
+            self.assertEqual(3, total)
+            self.assertEqual(3, updated)
 
     @mock.patch('cinder.objects.Service.get_minimum_obj_version',
                 return_value='1.8')
     def test_shared_targets_migrations_with_limit(self, mock_version):
         """Ensure we update in batches."""
-        ctxt = context.get_admin_context()
-        # default value in db for shared_targets on a volume
-        # is True, so don't need to set it here explicitly
-        sqlalchemy_api.volume_create(
-            ctxt,
-            {'host': 'host1@lvm-driver1#lvm-driver1',
-             'service_uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'})
-
-        sqlalchemy_api.volume_create(
-            ctxt,
-            {'host': 'host1@lvm-driver1#lvm-driver1',
-             'service_uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'})
-
-        sqlalchemy_api.volume_create(
-            ctxt,
-            {'host': 'host1@lvm-driver1#lvm-driver1',
-             'service_uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'})
-
-        values = {
-            'host': 'host1@lvm-driver1',
-            'binary': constants.VOLUME_BINARY,
-            'topic': constants.VOLUME_TOPIC,
-            'uuid': 'f080f895-cff2-4eb3-9c61-050c060b59ad'}
-        utils.create_service(ctxt, values)
-
         # Run the migration and verify that we updated 1 entry
         with mock.patch('cinder.volume.rpcapi.VolumeAPI.get_capabilities',
-                        return_value={'shared_targets': False}):
+                        return_value={'connection_protocol': 'iSCSI',
+                                      'shared_targets': False}):
             total, updated = (
                 cinder_manage.shared_targets_online_data_migration(
-                    ctxt, 2))
+                    self.ctxt, 2))
             self.assertEqual(3, total)
             self.assertEqual(2, updated)
 
             total, updated = (
                 cinder_manage.shared_targets_online_data_migration(
-                    ctxt, 2))
+                    self.ctxt, 2))
             self.assertEqual(1, total)
             self.assertEqual(1, updated)

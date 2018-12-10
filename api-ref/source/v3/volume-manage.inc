@@ -43,15 +43,15 @@ Request
 
    - project_id: project_id_path
    - volume: volume
-   - description: description_5
+   - description: description_vol
    - availability_zone: availability_zone
-   - bootable: bootable_1
+   - bootable: bootable_required
    - volume_type: volume_type
-   - name: volume_name_1
+   - name: volume_name_optional
    - host: host_mutex
    - cluster: cluster_mutex
    - ref: ref
-   - metadata: metadata_10
+   - metadata: metadata_vol
 
 Request Example
 ---------------
@@ -60,6 +60,41 @@ Request Example
    :language: javascript
 
 .. literalinclude:: ./samples/volume-manage-request-cluster.json
+   :language: javascript
+
+
+Response
+--------
+
+.. rest_parameters:: parameters.yaml
+
+   - volume: volume
+   - status: status_vol
+   - migration_status: migration_status_req
+   - user_id: user_id
+   - attachments: attachments
+   - links: links_vol
+   - availability_zone: availability_zone
+   - bootable: bootable_response
+   - encrypted: encrypted
+   - created_at: created_at
+   - description: description_vol
+   - updated_at: updated_at
+   - volume_type: volume_type
+   - name: name_vol
+   - replication_status: replication_status
+   - consistencygroup_id: consistencygroup_id_required
+   - source_volid: source_volid
+   - snapshot_id: snapshot_id
+   - multiattach: multiattach_resp
+   - metadata: metadata_vol_obj
+   - id: id_vol
+   - size: size
+
+Response Example
+----------------
+
+.. literalinclude:: ./samples/volume-manage-response.json
    :language: javascript
 
 

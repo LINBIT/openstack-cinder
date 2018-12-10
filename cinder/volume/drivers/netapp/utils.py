@@ -26,10 +26,10 @@ NetApp drivers to achieve the desired functionality.
 import decimal
 import platform
 import re
-import socket
 
 from oslo_concurrency import processutils as putils
 from oslo_log import log as logging
+from oslo_utils import netutils
 import six
 
 from cinder import context
@@ -147,13 +147,6 @@ def trace_filter_func_api(all_args):
     return re.match(API_TRACE_PATTERN, api_name) is not None
 
 
-def resolve_hostname(hostname):
-    """Resolves host name to IP address."""
-    res = socket.getaddrinfo(hostname, None)[0]
-    family, socktype, proto, canonname, sockaddr = res
-    return sockaddr[0]
-
-
 def round_down(value, precision='0.00'):
     return float(decimal.Decimal(six.text_type(value)).quantize(
         decimal.Decimal(precision), rounding=decimal.ROUND_DOWN))
@@ -174,6 +167,9 @@ def log_extra_spec_warnings(extra_specs):
 
 def get_iscsi_connection_properties(lun_id, volume, iqn,
                                     address, port):
+    # literal ipv6 address
+    if netutils.is_valid_ipv6(address):
+        address = netutils.escape_ipv6(address)
 
     properties = {}
     properties['target_discovered'] = False
@@ -359,6 +355,30 @@ def get_legacy_qos_policy(extra_specs):
     if external_policy_name is None:
         return None
     return dict(policy_name=external_policy_name)
+
+
+def get_export_host_junction_path(share):
+    if '[' in share and ']' in share:
+        try:
+            # ipv6
+            host = re.search('\[(.*)\]', share).group(1)
+            junction_path = share.split(':')[-1]
+        except AttributeError:
+            raise exception.NetAppDriverException(_("Share '%s' is "
+                                                    "not in a valid "
+                                                    "format.") % share)
+    else:
+        # ipv4
+        path = share.split(':')
+        if len(path) == 2:
+            host = path[0]
+            junction_path = path[1]
+        else:
+            raise exception.NetAppDriverException(_("Share '%s' is "
+                                                    "not in a valid "
+                                                    "format.") % share)
+
+    return host, junction_path
 
 
 class hashabledict(dict):

@@ -1880,7 +1880,7 @@ def _process_model_like_filter(model, query, filters):
         if 'property' == type(column_attr).__name__:
             continue
         value = filters[key]
-        if not (isinstance(value, six.string_types) or isinstance(value, int)):
+        if not (isinstance(value, (six.string_types, int))):
             continue
         query = query.filter(
             column_attr.op('LIKE')(u'%%%s%%' % value))
@@ -4013,7 +4013,14 @@ def volume_types_get_by_name_or_id(context, volume_type_list):
         if not uuidutils.is_uuid_like(vol_t):
             vol_type = _volume_type_get_by_name(context, vol_t)
         else:
-            vol_type = _volume_type_get(context, vol_t)
+            try:
+                vol_type = _volume_type_get(context, vol_t)
+            except exception.VolumeTypeNotFound:
+                # check again if we get this volume type by uuid-like name
+                try:
+                    vol_type = _volume_type_get_by_name(context, vol_t)
+                except exception.VolumeTypeNotFoundByName:
+                    raise exception.VolumeTypeNotFound(volume_type_id=vol_t)
         req_volume_types.append(vol_type)
     return req_volume_types
 
@@ -5192,7 +5199,7 @@ def _process_backups_filters(query, filters):
         filters_dict = {}
         for key, value in filters.items():
             if key == 'metadata':
-                col_attr = getattr(models.Snapshot, 'snapshot_metadata')
+                col_attr = getattr(models.Backup, 'backup_metadata')
                 for k, v in value.items():
                     query = query.filter(col_attr.any(key=k, value=v))
             else:
@@ -6536,9 +6543,9 @@ def purge_deleted_rows(context, age_in_days):
                 if six.text_type(table) == "quality_of_service_specs":
                     session.query(models.QualityOfServiceSpecs).filter(
                         and_(models.QualityOfServiceSpecs.specs_id.isnot(
-                            None), models.QualityOfServiceSpecs.deleted == 1,
-                            models.QualityOfServiceSpecs.deleted_at <
-                            deleted_age)).delete()
+                            None), models.QualityOfServiceSpecs.
+                            deleted.is_(True), models.QualityOfServiceSpecs.
+                            deleted_at < deleted_age)).delete()
                 result = session.execute(
                     table.delete()
                     .where(table.c.deleted_at < deleted_age))

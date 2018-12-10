@@ -42,17 +42,10 @@ import re
 import six
 import uuid
 
-from oslo_serialization import base64
-from oslo_utils import importutils
-
-hpe3parclient = importutils.try_import("hpe3parclient")
-if hpe3parclient:
-    from hpe3parclient import client
-    from hpe3parclient import exceptions as hpeexceptions
-
 from oslo_config import cfg
 from oslo_log import log as logging
 from oslo_log import versionutils
+from oslo_serialization import base64
 from oslo_service import loopingcall
 from oslo_utils import excutils
 from oslo_utils import units
@@ -62,6 +55,7 @@ from cinder import exception
 from cinder import flow_utils
 from cinder.i18n import _
 from cinder.objects import fields
+from cinder import utils
 from cinder.volume import configuration
 from cinder.volume import qos_specs
 from cinder.volume import utils as volume_utils
@@ -69,6 +63,15 @@ from cinder.volume import volume_types
 
 import taskflow.engines
 from taskflow.patterns import linear_flow
+
+try:
+    import hpe3parclient
+    from hpe3parclient import client
+    from hpe3parclient import exceptions as hpeexceptions
+except ImportError:
+    hpe3parclient = None
+    client = None
+    hpeexceptions = None
 
 LOG = logging.getLogger(__name__)
 
@@ -269,11 +272,12 @@ class HPE3PARCommon(object):
         4.0.8 - Added support for report backend state in service list.
         4.0.9 - Set proper backend on subsequent operation, after group
                 failover. bug #1773069
+        4.0.10 - Added retry in delete_volume. bug #1783934
 
 
     """
 
-    VERSION = "4.0.9"
+    VERSION = "4.0.10"
 
     stats = {}
 
@@ -486,7 +490,7 @@ class HPE3PARCommon(object):
 
         # Get the client ID for provider_location. We only need to retrieve
         # the ID directly from the array if the driver stats are not provided.
-        if not stats:
+        if not stats or 'array_id' not in stats:
             try:
                 self.client_login()
                 info = self.client.getStorageSystemInfo()
@@ -499,6 +503,12 @@ class HPE3PARCommon(object):
             self.client.id = stats['array_id']
 
     def check_for_setup_error(self):
+        """Verify that requirements are in place to use HPE driver."""
+        if not all((hpe3parclient, client, hpeexceptions)):
+            msg = _('HPE driver setup error: some required '
+                    'libraries (hpe3parclient, client.*) not found.')
+            LOG.error(msg)
+            raise exception.VolumeDriverException(message=msg)
         if self.client:
             self.client_login()
             try:
@@ -1716,7 +1726,6 @@ class HPE3PARCommon(object):
             vluns = self.client.getHostVLUNs(hostname)
         except hpeexceptions.HTTPNotFound:
             LOG.debug("All VLUNs removed from host %s", hostname)
-            pass
 
         if wwn is not None and not isinstance(wwn, list):
             wwn = [wwn]
@@ -2465,6 +2474,17 @@ class HPE3PARCommon(object):
             raise exception.CinderException(ex)
 
     def delete_volume(self, volume):
+
+        @utils.retry(exception.VolumeIsBusy, interval=2, retries=10)
+        def _try_remove_volume(volume_name):
+            try:
+                self.client.deleteVolume(volume_name)
+            except Exception:
+                msg = _("The volume is currently busy on the 3PAR "
+                        "and cannot be deleted at this time. "
+                        "You can try again later.")
+                raise exception.VolumeIsBusy(message=msg)
+
         # v2 replication check
         # If the volume type is replication enabled, we want to call our own
         # method of deconstructing the volume and its dependencies
@@ -2515,13 +2535,7 @@ class HPE3PARCommon(object):
                     else:
                         # the volume is being operated on in a background
                         # task on the 3PAR.
-                        # TODO(walter-boring) do a retry a few times.
-                        # for now lets log a better message
-                        msg = _("The volume is currently busy on the 3PAR"
-                                " and cannot be deleted at this time. "
-                                "You can try again later.")
-                        LOG.error(msg)
-                        raise exception.VolumeIsBusy(message=msg)
+                        _try_remove_volume(volume_name)
                 elif (ex.get_code() == 32):
                     # Error 32 means that the volume has children
 
@@ -3400,7 +3414,6 @@ class HPE3PARCommon(object):
                       "combination: %(host)s, %(vol)s",
                       {'host': host['name'],
                        'vol': vol_name})
-            pass
         return existing_vlun
 
     def find_existing_vluns(self, volume, host):
@@ -3418,7 +3431,6 @@ class HPE3PARCommon(object):
                       "combination: %(host)s, %(vol)s",
                       {'host': host['name'],
                        'vol': vol_name})
-            pass
         return existing_vluns
 
     # v2 replication methods

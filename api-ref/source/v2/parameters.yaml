@@ -324,6 +324,12 @@ backups:
   in: body
   required: true
   type: array
+backups_number:
+  description: |
+    The number of backups that are allowed for each project.
+  in: body
+  required: true
+  type: integer
 bootable:
   description: |
     Enables or disables the bootable attribute. You
@@ -342,7 +348,7 @@ capabilities:
   description: |
     The capabilities for the back end.  The value is
     either ``null`` or a string value that indicates the capabilities
-    for each pool. For example, ``total_capacity`` or ``QoS_support``.
+    for each pool. For example, ``total_capacity_gb`` or ``QoS_support``.
   in: body
   required: true
   type: object
@@ -626,10 +632,29 @@ free_capacity:
   description: |
     The amount of free capacity for the back-end
     volume, in GBs. A valid value is a string, such as ``unknown``, or
-    an integer.
+    a number (integer or floating point).
   in: body
   required: true
   type: string
+gigabytes:
+  description: |
+    The size (GB) of volumes and snapshots that are allowed for each project.
+  in: body
+  required: true
+  type: integer
+gigabytes_for_type:
+  description: |
+    The size (GB) of volumes and snapshots that are allowed for each project
+    and the specified volume type.
+  in: body
+  required: true
+  type: integer
+groups_number:
+  description: |
+    The number of groups that are allowed for each project.
+  in: body
+  required: true
+  type: integer
 has_dependent_backups:
   description: |
     If this value is ``true``, there are other backups depending on
@@ -843,6 +868,12 @@ links_4:
   in: body
   required: true
   type: array
+links_5:
+  description: |
+    List of links related to the extension.
+  in: body
+  required: true
+  type: array
 location:
   description: |
     Full URL to a service or server.
@@ -980,6 +1011,29 @@ metadata_items:
   in: body
   required: true
   type: integer
+migrate_force_host_copy:
+  description: |
+    If false (the default), rely on the volume backend driver to perform
+    the migration, which might be optimized. If true, or the volume driver
+    fails to migrate the volume itself, a generic host-based migration is
+    performed.
+  in: body
+  required: false
+  type: boolean
+migrate_host:
+  description: |
+    The target host for the volume migration. Host format is ``host@backend``.
+  in: body
+  required: true
+  type: string
+migrate_lock_volume:
+  description: |
+    If true, migrating an ``available`` volume will change its status to
+    ``maintenance`` preventing other operations from being performed on the
+    volume such as attach, detach, retype, etc.
+  in: body
+  required: false
+  type: boolean
 # NOTE(mriedem): We can update the migration_policy retype note about encrypted
 # in-use volumes not being supported once
 # https://bugzilla.redhat.com/show_bug.cgi?id=760547 is fixed.
@@ -1080,6 +1134,12 @@ name_15:
   in: body
   required: false
   type: string
+name_16:
+  description: |
+    The name of the backend pool.
+  in: body
+  required: true
+  type: string
 name_2:
   description: |
     The consistency group snapshot name.
@@ -1115,12 +1175,6 @@ name_7:
     The name of the volume type.
   in: body
   required: true
-  type: string
-name_8:
-  description: |
-    The volume name.
-  in: body
-  required: false
   type: string
 name_9:
   description: |
@@ -1182,7 +1236,7 @@ os-extended-snapshot-attributes:progress:
     A percentage value for the build progress.
   in: body
   required: true
-  type: integer
+  type: string
 os-extended-snapshot-attributes:project_id:
   description: |
     The UUID of the owning project.
@@ -1198,6 +1252,12 @@ os-force_delete:
 os-force_detach:
   description: |
     The ``os-force_detach`` action.
+  in: body
+  required: true
+  type: object
+os-migrate_volume:
+  description: |
+    The ``os-migrate_volume`` action.
   in: body
   required: true
   type: object
@@ -1492,16 +1552,22 @@ snapshot_id_2:
   in: body
   required: false
   type: string
+snapshots_number:
+  description: |
+    The number of snapshots that are allowed for each project.
+  in: body
+  required: true
+  type: integer
+snapshots_number_for_type:
+  description: |
+    The number of snapshots that are allowed for each project and
+    the specified volume type.
+  in: body
+  required: true
+  type: integer
 source_cgid:
   description: |
     The UUID of the source consistency group.
-  in: body
-  required: false
-  type: string
-source_replica:
-  description: |
-    The UUID of the replication volume to clone. This was for legacy
-    replication functionality and is no longer supported.
   in: body
   required: false
   type: string
@@ -1565,8 +1631,8 @@ storage_protocol:
 total_capacity:
   description: |
     The total capacity for the back-end volume, in
-    GBs. A valid value is a string, such as ``unknown``, or an
-    integer.
+    GBs. A valid value is a string, such as ``unknown``, or a
+    number (integer or floating point).
   in: body
   required: true
   type: string
@@ -1737,6 +1803,12 @@ volume_name:
   in: body
   required: true
   type: string
+volume_name_optional:
+  description: |
+    The volume name.
+  in: body
+  required: false
+  type: string
 volume_type_1:
   description: |
     A ``volume_type`` object.
@@ -1745,7 +1817,7 @@ volume_type_1:
   type: object
 volume_type_2:
   description: |
-    The volume type. To create an environment with
+    The volume type (either name or ID). To create an environment with
     multiple-storage back ends, you must specify a volume type. Block
     Storage volume back ends are spawned as children to ``cinder-
     volume``, and they are keyed from a unique queue. They are named
@@ -1819,3 +1891,16 @@ volumes:
   in: body
   required: true
   type: array
+volumes_number:
+  description: |
+    The number of volumes that are allowed for each project.
+  in: body
+  required: true
+  type: integer
+volumes_number_for_type:
+  description: |
+    The number of volumes that are allowed for each project and
+    the specified volume type.
+  in: body
+  required: true
+  type: integer

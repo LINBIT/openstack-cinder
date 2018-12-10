@@ -532,7 +532,7 @@ class VMAXCommon(object):
         async_grp = None
         LOG.info("Unmap volume: %(volume)s.", {'volume': volume})
         if connector is not None:
-            host = connector['host']
+            host = self.utils.get_host_short_name(connector['host'])
             attachment_list = volume.volume_attachment
             LOG.debug("Volume attachment list: %(atl)s. "
                       "Attachment type: %(at)s",
@@ -1989,14 +1989,20 @@ class VMAXCommon(object):
             volume, external_ref)
         volume_id = volume.id
         # Check if the existing volume is valid for cinder management
-        self._check_lun_valid_for_cinder_management(
+        orig_vol_name, src_sg = self._check_lun_valid_for_cinder_management(
             array, device_id, volume_id, external_ref)
+        # If volume name is not present, then assign the device id as the name
+        if not orig_vol_name:
+            orig_vol_name = device_id
+        LOG.debug("Original volume name %(vol)s and source sg: %(sg_name)s.",
+                  {'vol': orig_vol_name,
+                   'sg_name': src_sg})
         extra_specs = self._initial_setup(volume)
 
         volume_name = self.utils.get_volume_element_name(volume_id)
         # Rename the volume
         LOG.debug("Rename volume %(vol)s to %(element_name)s.",
-                  {'vol': volume_id,
+                  {'vol': orig_vol_name,
                    'element_name': volume_name})
         self.rest.rename_volume(array, device_id, volume_name)
         provider_location = {'device_id': device_id, 'array': array}
@@ -2010,9 +2016,22 @@ class VMAXCommon(object):
             model_update.update(rep_update)
 
         else:
-            # Add volume to default storage group
-            self.masking.add_volume_to_default_storage_group(
-                array, device_id, volume_name, extra_specs)
+            try:
+                # Add/move volume to default storage group
+                self.masking.add_volume_to_default_storage_group(
+                    array, device_id, volume_name, extra_specs, src_sg=src_sg)
+            except Exception as e:
+                exception_message = (_(
+                    "Unable to move the volume to the default SG. "
+                    "Exception received was %(e)s") % {'e': six.text_type(e)})
+                LOG.error(exception_message)
+                # Try to rename the volume back to the original name
+                LOG.debug("Rename volume %(vol)s back to %(element_name)s.",
+                          {'vol': volume_id,
+                           'element_name': orig_vol_name})
+                self.rest.rename_volume(array, device_id, orig_vol_name)
+                raise exception.VolumeBackendAPIException(
+                    message=exception_message)
 
         self.volume_metadata.capture_manage_existing(
             volume, rep_info_dict, device_id, extra_specs)
@@ -2027,6 +2046,8 @@ class VMAXCommon(object):
         :param device_id: the device id
         :param volume_id: the cinder volume id
         :param external_ref: the external reference
+        :returns volume_identifier - name of the volume on VMAX
+        :returns sg - the storage group which the LUN belongs to
         :raises: ManageExistingInvalidReference, ManageExistingAlreadyManaged:
         """
         # Ensure the volume exists on the array
@@ -2036,18 +2057,26 @@ class VMAXCommon(object):
                      'device %(device_id)s') % {'device_id': device_id})
             raise exception.ManageExistingInvalidReference(
                 existing_ref=external_ref, reason=msg)
-
+        volume_identifier = None
         # Check if volume is already cinder managed
         if volume_details.get('volume_identifier'):
             volume_identifier = volume_details['volume_identifier']
             if volume_identifier.startswith(utils.VOLUME_ELEMENT_NAME_PREFIX):
                 raise exception.ManageExistingAlreadyManaged(
                     volume_ref=volume_id)
-
-        # Check if the volume is attached by checking if in any masking view.
+        # Check if the volume is part of multiple SGs and
+        # check if the volume is attached by checking if in any masking view.
         storagegrouplist = self.rest.get_storage_groups_from_volume(
             array, device_id)
-        for sg in storagegrouplist:
+        if storagegrouplist and len(storagegrouplist) > 1:
+            msg = (_("Unable to import volume %(device_id)s to cinder. "
+                     "Volume is in multiple SGs.")
+                   % {'device_id': device_id})
+            raise exception.ManageExistingInvalidReference(
+                existing_ref=external_ref, reason=msg)
+        sg = None
+        if storagegrouplist:
+            sg = storagegrouplist[0]
             mvs = self.rest.get_masking_views_from_storage_group(
                 array, sg)
             if mvs:
@@ -2067,6 +2096,7 @@ class VMAXCommon(object):
                    % {'device_id': device_id})
             raise exception.ManageExistingInvalidReference(
                 existing_ref=external_ref, reason=msg)
+        return volume_identifier, sg
 
     def manage_existing_get_size(self, volume, external_ref):
         """Return size of an existing VMAX volume to manage_existing.

@@ -95,7 +95,7 @@ Request
    - group: group
    - description: description_group_false
    - availability_zone: availability_zone
-   - group_type: group_type
+   - group_type: group_type_id
    - volume_types: volume_types
    - name: group_name
 
@@ -103,6 +103,20 @@ Request Example
 ---------------
 
 .. literalinclude:: ./samples/group-create-request.json
+   :language: javascript
+
+Response Parameters
+-------------------
+
+.. rest_parameters:: parameters.yaml
+
+   - id: group_id_path
+   - name: group_name
+
+Response Example
+----------------
+
+.. literalinclude:: ./samples/group-create-response.json
    :language: javascript
 
 
@@ -130,7 +144,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - group_id: group_id
+   - group_id: group_id_path
    - list_volume: list_volume
 
 Response Parameters
@@ -139,11 +153,13 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - group: group
-   - status: status_8
+   - status: status_group
    - description: description_group_true
    - availability_zone: availability_zone
    - created_at: created_at
-   - group_type: group_type
+   - group_type: group_type_id
+   - group_snapshot_id: group_snapshot_id
+   - source_group_id: source_group_id
    - volume_types: volume_types
    - id: id
    - name: group_name
@@ -186,14 +202,28 @@ Request
    - project_id: project_id_path
    - create-from-src: create-from-src
    - description: description_group_false
-   - group_snapshot_id: group_snapshot_id_1
-   - source_group_id: source_group_id
+   - group_snapshot_id: group_snapshot_id_req
+   - source_group_id: source_group_id_req
    - name: group_name
 
 Request Example
 ---------------
 
 .. literalinclude:: ./samples/group-create-from-src-request.json
+   :language: javascript
+
+Response Parameters
+-------------------
+
+.. rest_parameters:: parameters.yaml
+
+   - id: group_id_path
+   - name: group_name
+
+Response Example
+----------------
+
+.. literalinclude:: ./samples/group-create-from-src-response.json
    :language: javascript
 
 
@@ -223,7 +253,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - group_id: group_id
+   - group_id: group_id_path
    - delete: delete
    - delete-volumes: delete-volumes
 
@@ -275,13 +305,15 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - groups: groups
-   - status: status_8
+   - status: status_group
    - description: description_group_true
    - availability_zone: availability_zone
    - created_at: created_at
-   - group_type: group_type
+   - group_type: group_type_id
+   - group_snapshot_id: group_snapshot_id
+   - source_group_id: source_group_id
    - volume_types: volume_types
-   - id: group_id
+   - id: group_id_path
    - name: name
    - volumes: volume_ids
 
@@ -318,7 +350,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - group_id: group_id
+   - group_id: group_id_path
    - group: group
    - remove_volumes: remove_volumes
    - description: description_group_false
@@ -358,7 +390,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id
-   - group_id: group_id
+   - group_id: group_id_path
    - reset_status: reset_status
    - status: status
 

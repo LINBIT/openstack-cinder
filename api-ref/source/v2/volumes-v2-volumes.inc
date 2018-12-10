@@ -185,13 +185,12 @@ Request
    - multiattach: multiattach_req
    - availability_zone: availability_zone
    - source_volid: source_volid
-   - name: name_13
+   - name: volume_name_optional
    - volume: volume
    - consistencygroup_id: consistencygroup_id_1
    - volume_type: volume_type_2
    - snapshot_id: snapshot_id
    - OS-SCH-HNT:scheduler_hints: OS-SCH-HNT:scheduler_hints
-   - source_replica: source_replica
    - metadata: metadata_2
    - project_id: project_id_path
 
@@ -496,7 +495,7 @@ Response codes
 
 .. rest_status_code:: success ../status.yaml
 
-   - 202
+   - 200
 
 
 Request

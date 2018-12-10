@@ -91,25 +91,20 @@ from cinder.volume.drivers.dell_emc.vnx import common as \
     cinder_volume_drivers_dell_emc_vnx_common
 from cinder.volume.drivers.dell_emc import xtremio as \
     cinder_volume_drivers_dell_emc_xtremio
-from cinder.volume.drivers.disco import disco as \
-    cinder_volume_drivers_disco_disco
 from cinder.volume.drivers import drbdmanagedrv as \
     cinder_volume_drivers_drbdmanagedrv
 from cinder.volume.drivers.fujitsu import eternus_dx_common as \
     cinder_volume_drivers_fujitsu_eternusdxcommon
 from cinder.volume.drivers.fusionstorage import dsware as \
     cinder_volume_drivers_fusionstorage_dsware
-from cinder.volume.drivers import hgst as cinder_volume_drivers_hgst
 from cinder.volume.drivers.hpe import hpe_3par_common as \
     cinder_volume_drivers_hpe_hpe3parcommon
 from cinder.volume.drivers.hpe import hpe_lefthand_iscsi as \
     cinder_volume_drivers_hpe_hpelefthandiscsi
-from cinder.volume.drivers.huawei import huawei_driver as \
-    cinder_volume_drivers_huawei_huaweidriver
+from cinder.volume.drivers.huawei import common as \
+    cinder_volume_drivers_huawei_common
 from cinder.volume.drivers.ibm import flashsystem_common as \
     cinder_volume_drivers_ibm_flashsystemcommon
-from cinder.volume.drivers.ibm import flashsystem_fc as \
-    cinder_volume_drivers_ibm_flashsystemfc
 from cinder.volume.drivers.ibm import flashsystem_iscsi as \
     cinder_volume_drivers_ibm_flashsystemiscsi
 from cinder.volume.drivers.ibm import gpfs as cinder_volume_drivers_ibm_gpfs
@@ -290,17 +285,14 @@ def list_opts():
                 cinder_volume_drivers_dell_emc_vmax_common.vmax_opts,
                 cinder_volume_drivers_dell_emc_vnx_common.VNX_OPTS,
                 cinder_volume_drivers_dell_emc_xtremio.XTREMIO_OPTS,
-                cinder_volume_drivers_disco_disco.disco_opts,
                 cinder_volume_drivers_drbdmanagedrv.drbd_opts,
                 cinder_volume_drivers_fujitsu_eternusdxcommon.
                 FJ_ETERNUS_DX_OPT_opts,
                 cinder_volume_drivers_fusionstorage_dsware.volume_opts,
-                cinder_volume_drivers_hgst.hgst_opts,
                 cinder_volume_drivers_hpe_hpe3parcommon.hpe3par_opts,
                 cinder_volume_drivers_hpe_hpelefthandiscsi.hpelefthand_opts,
-                cinder_volume_drivers_huawei_huaweidriver.huawei_opts,
+                cinder_volume_drivers_huawei_common.huawei_opts,
                 cinder_volume_drivers_ibm_flashsystemcommon.flashsystem_opts,
-                cinder_volume_drivers_ibm_flashsystemfc.flashsystem_fc_opts,
                 cinder_volume_drivers_ibm_flashsystemiscsi.
                 flashsystem_iscsi_opts,
                 cinder_volume_drivers_ibm_gpfs.gpfs_opts,

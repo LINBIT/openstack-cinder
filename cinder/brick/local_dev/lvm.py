@@ -28,6 +28,7 @@ from oslo_utils import excutils
 from six import moves
 
 from cinder import exception
+import cinder.privsep.lvm
 from cinder import utils
 
 
@@ -621,6 +622,7 @@ class LVM(executor.Executor):
                 return True
         return False
 
+    @utils.retry(exception.VolumeNotDeactivated, retries=1, interval=2)
     def deactivate_lv(self, name):
         lv_path = self.vg_name + '/' + self._mangle_lv_name(name)
         cmd = ['lvchange', '-a', 'n']
@@ -630,7 +632,7 @@ class LVM(executor.Executor):
                           root_helper=self._root_helper,
                           run_as_root=True)
         except putils.ProcessExecutionError as err:
-            LOG.exception('Error deactivating LV')
+            LOG.exception('Error deactivating LV, retry may be possible')
             LOG.error('Cmd     :%s', err.cmd)
             LOG.error('StdOut  :%s', err.stdout)
             LOG.error('StdErr  :%s', err.stderr)
@@ -704,9 +706,7 @@ class LVM(executor.Executor):
         """
 
         def run_udevadm_settle():
-            self._execute('udevadm', 'settle',
-                          root_helper=self._root_helper, run_as_root=True,
-                          check_exit_code=False)
+            cinder.privsep.lvm.udevadm_settle()
 
         # LV removal seems to be a race with other writers or udev in
         # some cases (see LP #1270192), so we enable retry deactivation

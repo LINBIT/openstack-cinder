@@ -28,6 +28,7 @@ import uuid
 
 from eventlet import tpool
 import fixtures
+from keystonemiddleware import auth_token
 import mock
 from oslo_concurrency import lockutils
 from oslo_config import fixture as config_fixture
@@ -215,6 +216,11 @@ class TestCase(testtools.TestCase):
         rpc.LAST_OBJ_VERSIONS = {}
         rpc.LAST_RPC_VERSIONS = {}
 
+        # Init AuthProtocol to register some base options first, such as
+        # auth_url.
+        auth_token.AuthProtocol('fake_app', {'auth_type': 'password',
+                                             'auth_url': 'fake_url'})
+
         conf_fixture.set_defaults(CONF)
         CONF([], default_config_files=[])
 
@@ -341,7 +347,7 @@ class TestCase(testtools.TestCase):
         # Delete attributes that don't start with _ so they don't pin
         # memory around unnecessarily for the duration of the test
         # suite
-        for key in [k for k in self.__dict__.keys() if k[0] != '_']:
+        for key in [k for k in self.__dict__ if k[0] != '_']:
             del self.__dict__[key]
 
     def override_config(self, name, override, group=None):

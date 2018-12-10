@@ -32,6 +32,7 @@ from cinder.volume import configuration
 from cinder.volume import driver
 from cinder.volume.drivers.san import san
 from cinder.volume.drivers.zfssa import zfssarest
+from cinder.volume import utils as volume_utils
 from cinder.volume import volume_types
 
 import taskflow.engines
@@ -121,8 +122,10 @@ class ZFSSAISCSIDriver(driver.ISCSIDriver):
             Volume manage/unmanage support.
         1.0.3:
             Fix multi-connect to enable live-migration (LP#1565051).
+        1.0.4:
+            Implement get_manageable_volumes().
     """
-    VERSION = '1.0.3'
+    VERSION = '1.0.4'
     protocol = 'iSCSI'
 
     # ThirdPartySystems wiki page
@@ -1088,6 +1091,41 @@ class ZFSSAISCSIDriver(driver.ISCSIDriver):
                 LOG.warning("Volume %s exists but can't be deleted.",
                             cache['share'])
 
+    def get_manageable_volumes(self, cinder_volumes, marker, limit, offset,
+                               sort_keys, sort_dirs):
+        lcfg = self.configuration
+        manageable_volumes = []
+        managed_vols = [vol['id'] for vol in cinder_volumes]
+
+        for lun in self.zfssa.get_all_luns(lcfg.zfssa_pool,
+                                           lcfg.zfssa_project):
+            lun_info = {
+                'reference': {'source-name': lun['name']},
+                'size': int(math.ceil(float(lun['size']) / units.Gi)),
+                'cinder_id': None,
+                'extra_info': None,
+                'safe_to_manage': True,
+                'reason_not_safe': None,
+            }
+            if ('cinder_managed' not in lun and
+                    lcfg.zfssa_manage_policy != 'loose'):
+                lun_info['safe_to_manage'] = False
+                lun_info['reason_not_safe'] = 'cinder_managed schema ' \
+                                              'not present'
+            elif lun.get('cinder_managed', False):
+                lun_info['safe_to_manage'] = False
+                vol_id = volume_utils.extract_id_from_volume_name(lun['name'])
+                if vol_id in managed_vols:
+                    lun_info['reason_not_safe'] = 'already managed'
+                    lun_info['cinder_id'] = vol_id
+                else:
+                    lun_info['reason_not_safe'] = \
+                        'managed by another cinder instance?'
+            manageable_volumes.append(lun_info)
+
+        return volume_utils.paginate_entries_list(
+            manageable_volumes, marker, limit, offset, sort_keys, sort_dirs)
+
     def manage_existing(self, volume, existing_ref):
         """Manage an existing volume in the ZFSSA backend.
 
@@ -1179,10 +1217,11 @@ class ZFSSAISCSIDriver(driver.ISCSIDriver):
                                               lcfg.zfssa_project,
                                               existing_ref['source-name'])
         except exception.VolumeNotFound:
-            err_msg = (_("Volume %s doesn't exist on the ZFSSA "
-                         "backend.") % existing_vol['name'])
+            err_msg = (_("No LUN with name %s exists on the ZFSSA "
+                         "backend.") % existing_ref['source-name'])
             LOG.error(err_msg)
-            raise exception.InvalidInput(reason=err_msg)
+            raise exception.ManageExistingInvalidReference(
+                existing_ref=existing_ref, reason=err_msg)
         return existing_vol
 
 

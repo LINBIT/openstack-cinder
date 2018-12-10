@@ -74,18 +74,20 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - status: status_2
+   - status: status_snap
    - os-extended-snapshot-attributes:progress: os-extended-snapshot-attributes:progress
-   - description: description_8
+   - description: description_snap_req
    - created_at: created_at
    - name: name
-   - user_id: user_id_2
-   - volume_id: volume_id
+   - user_id: user_id_min
+   - volume_id: volume_id_snap
    - os-extended-snapshot-attributes:project_id: os-extended-snapshot-attributes:project_id
    - size: size
-   - id: id
+   - id: id_snap
    - metadata: metadata
    - count: count
+   - updated_at: updated_at
+   - snapshots_links: links_snap
 
 Response Example
 ----------------
@@ -116,12 +118,12 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - snapshot: snapshot_1
+   - snapshot: snapshot_obj
    - volume_id: volume_id
-   - name: name_12
-   - description: description_4
+   - name: name_snap_req
+   - description: description_snap
    - force: force
-   - metadata: metadata_7
+   - metadata: metadata_snap
 
 Request Example
 ---------------
@@ -134,15 +136,15 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - status: status_2
-   - description: description_8
+   - status: status_snap
+   - description: description_snap_req
    - created_at: created_at
-   - name: name_12
-   - snapshot: snapshot_1
-   - user_id: user_id_2
-   - volume_id: volume_id
+   - name: name_snap_req
+   - snapshot: snapshot_obj
+   - user_id: user_id_min
+   - volume_id: volume_id_snap
    - metadata: metadata
-   - id: id_4
+   - id: id_snap
    - size: size
    - updated_at: updated_at
 
@@ -193,16 +195,18 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - status: status_2
-   - description: description_8
+   - status: status_snap
+   - description: description_snap_req
    - created_at: created_at
    - name: name
-   - user_id: user_id_2
-   - volume_id: volume_id
+   - user_id: user_id_min
+   - volume_id: volume_id_snap
    - metadata: metadata
-   - id: id
+   - id: id_snap
    - size: size
    - count: count
+   - updated_at: updated_at
+   - snapshots_links: links_snap
 
 Response Example
 ----------------
@@ -240,16 +244,6 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - status: status_2
-   - os-extended-snapshot-attributes:progress: os-extended-snapshot-attributes:progress
-   - description: description_8
-   - created_at: created_at
-   - name: name
-   - snapshot: snapshot_1
-   - volume_id: volume_id
-   - os-extended-snapshot-attributes:project_id: os-extended-snapshot-attributes:project_id
-   - size: size
-   - id: id
    - metadata: metadata
 
 Response Example
@@ -379,18 +373,19 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - status: status_2
+   - status: status_snap
    - os-extended-snapshot-attributes:progress: os-extended-snapshot-attributes:progress
-   - description: description_8
+   - description: description_snap_req
    - created_at: created_at
    - name: name
-   - snapshot: snapshot_1
-   - user_id: user_id_2
-   - volume_id: volume_id
+   - snapshot: snapshot_obj
+   - user_id: user_id_min
+   - volume_id: volume_id_snap
    - os-extended-snapshot-attributes:project_id: os-extended-snapshot-attributes:project_id
    - size: size
-   - id: id
+   - id: id_snap
    - metadata: metadata
+   - updated_at: updated_at
 
 Response Example
 ----------------
@@ -421,8 +416,8 @@ Request
 
    - project_id: project_id_path
    - snapshot_id: snapshot_id_path
-   - snapshot: snapshot_1
-   - description: description_4
+   - snapshot: snapshot_obj
+   - description: description_snap
    - name: name
 
 Request Example
@@ -438,15 +433,15 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - status: status_2
-   - description: description_8
+   - status: status_snap
+   - description: description_snap_req
    - created_at: created_at
    - name: name
-   - snapshot: snapshot_1
-   - id: id
+   - snapshot: snapshot_obj
+   - id: id_snap
    - size: size
-   - volume_id: volume_id
-   - user_id: user_id_2
+   - volume_id: volume_id_snap
+   - user_id: user_id_min
    - metadata: metadata
 
 Response Example
@@ -463,12 +458,22 @@ Delete a snapshot
 
 Deletes a snapshot.
 
+Preconditions:
+
+    - Snapshot status must be ``available`` or ``error``
+
 Response codes
 --------------
 
 .. rest_status_code:: success ../status.yaml
 
    - 202
+
+.. rest_status_code:: error ../status.yaml
+
+   - 400
+   - 403
+   - 404
 
 
 Request
@@ -502,7 +507,7 @@ Request
 
    - project_id: project_id_path
    - snapshot_id: snapshot_id_path
-   - key: key_2
+   - key: key_view
 
 
 Response Parameters
@@ -510,7 +515,7 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - meta: meta_1
+   - meta: meta_snap
 
 Response Example
 ----------------
@@ -542,7 +547,7 @@ Request
 
    - project_id: project_id_path
    - snapshot_id: snapshot_id_path
-   - key: key_1
+   - key: key_path
 
 
 Update a snapshot's metadata for a specific key
@@ -567,8 +572,8 @@ Request
 
    - project_id: project_id_path
    - snapshot_id: snapshot_id_path
-   - key: key_3
-   - meta: meta_1
+   - key: key_update
+   - meta: meta_snap
 
 Request Example
 ---------------
@@ -581,7 +586,7 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - meta: meta_1
+   - meta: meta_snap
 
 Response Example
 ----------------

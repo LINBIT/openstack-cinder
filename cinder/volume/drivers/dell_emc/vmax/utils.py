@@ -346,7 +346,7 @@ class VMAXUtils(object):
             exception_message = (_("Source volume device ID is required."))
             raise exception.VolumeBackendAPIException(
                 message=exception_message)
-        return array, device_id
+        return array, device_id.upper()
 
     @staticmethod
     def is_compression_disabled(extra_specs):
@@ -783,9 +783,9 @@ class VMAXUtils(object):
         :param new_type_extra_specs: the target type extra specs
         :return: bool
         """
-        is_src_multiattach = vol_utils.is_replicated_str(
+        is_src_multiattach = vol_utils.is_boolean_str(
             extra_specs.get('multiattach'))
-        is_tgt_multiattach = vol_utils.is_replicated_str(
+        is_tgt_multiattach = vol_utils.is_boolean_str(
             new_type_extra_specs.get('multiattach'))
         return is_src_multiattach != is_tgt_multiattach
 

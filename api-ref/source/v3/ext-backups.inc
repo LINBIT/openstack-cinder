@@ -7,9 +7,7 @@ A backup is a full copy of a volume stored in an external service.
 The service can be configured. The only supported service is Object
 Storage. A backup can subsequently be restored from the external
 service to either the same volume that the backup was originally
-taken from or to a new volume. Backup and restore operations can
-only be carried out on volumes that are in an unattached and
-available state.
+taken from or to a new volume.
 
 When you create, list, or delete backups, these status values are
 possible:
@@ -79,26 +77,26 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - backups: backups
-   - status: status_4
+   - status: status_backup
    - object_count: object_count
    - fail_reason: fail_reason
    - description: description
-   - links: links_1
+   - links: links_backup
    - availability_zone: availability_zone
    - created_at: created_at
    - updated_at: updated_at
-   - name: name_1
+   - name: name_backup
    - has_dependent_backups: has_dependent_backups
    - volume_id: volume_id
    - container: container
    - size: size
-   - id: id_1
+   - id: id_backup
    - is_incremental: is_incremental
    - data_timestamp: data_timestamp
-   - snapshot_id: snapshot_id_2
+   - snapshot_id: snapshot_id_source_vol
    - os-backup-project-attr:project_id: os-backup-project-attr:project_id
    - count: count
-   - metadata: metadata_9
+   - metadata: metadata_backup
 
 Response Example
 ----------------
@@ -128,7 +126,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - backup_id: backup_id
+   - backup_id: backup_id_required
 
 
 Response Parameters
@@ -137,26 +135,26 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - backup: backup
-   - status: status_4
+   - status: status_backup
    - object_count: object_count
    - container: container
    - description: description
-   - links: links_1
+   - links: links_backup
    - availability_zone: availability_zone
    - created_at: created_at
    - updated_at: updated_at
-   - name: name_1
+   - name: name_backup
    - has_dependent_backups: has_dependent_backups
    - volume_id: volume_id
    - fail_reason: fail_reason
    - size: size
    - backup: backup
-   - id: id_1
+   - id: id_backup
    - is_incremental: is_incremental
    - data_timestamp: data_timestamp
-   - snapshot_id: snapshot_id_2
+   - snapshot_id: snapshot_id_source_vol
    - os-backup-project-attr:project_id: os-backup-project-attr:project_id
-   - metadata: metadata_9
+   - metadata: metadata_backup
 
 Response Example
 ----------------
@@ -189,7 +187,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - backup_id: backup_id
+   - backup_id: backup_id_required
 
 
 Restore a backup
@@ -204,8 +202,8 @@ The name parameter will work only if a new volume is created.
 If UUID is specified, the backup will be restored to the specified volume.
 The specified volume has the following requirements:
 
-    * the specified volume status is ``available``.
-    * the size of specified volume must be equal to or greater than the size of backup.
+* the specified volume status is ``available``.
+* the size of specified volume must be equal to or greater than the size of backup.
 
 If no existing volume UUID is provided, the backup will be restored to a
 new volume matching the size and name of the originally backed up volume.
@@ -231,10 +229,10 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - backup_id: backup_id
+   - backup_id: backup_id_required
    - restore: restore
-   - name: name_8
-   - volume_id: volume_id_6
+   - name: volume_name_optional
+   - volume_id: volume_id_restore
 
 Request Example
 ---------------
@@ -248,7 +246,7 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - restore: restore
-   - backup_id: backup_id
+   - backup_id: backup_id_required
    - volume_id: volume_id
    - volume_name: volume_name
 
@@ -264,6 +262,9 @@ Create a backup
 .. rest_method::  POST /v3/{project_id}/backups
 
 Creates a Block Storage backup from a volume or snapshot.
+
+The status of the volume must be ``available`` or if the ``force`` flag is
+used, backups of ``in-use`` volumes may also be created.
 
 Response codes
 --------------
@@ -284,15 +285,15 @@ Request
 
    - project_id: project_id_path
    - backup: backup
-   - volume_id: volume_id_2
+   - volume_id: volume_id_backup
    - container: container
    - description: description
    - incremental: incremental
    - force: force
    - name: name_optional
-   - snapshot_id: snapshot_id_3
-   - metadata: metadata_9
-   - availability_zone: availability_zone_4
+   - snapshot_id: snapshot_id_backup
+   - metadata: metadata_backup
+   - availability_zone: availability_zone_backup
 
 Request Example
 ---------------
@@ -306,10 +307,15 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - backup: backup
-   - id: id_1
-   - links: links_1
-   - name: name_1
+   - id: id_backup
+   - links: links_backup
+   - name: name_backup
 
+Response Example
+----------------
+
+.. literalinclude:: ./samples/backup-create-response.json
+   :language: javascript
 
 Update a backup
 ~~~~~~~~~~~~~~~
@@ -323,7 +329,7 @@ Response codes
 
 .. rest_status_code:: success ../status.yaml
 
-   - 202
+   - 200
 
 .. rest_status_code:: error ../status.yaml
 
@@ -335,11 +341,11 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - backup_id: backup_id
+   - backup_id: backup_id_required
    - backup: backup
    - description: description
    - name: name_optional
-   - metadata: metadata_9
+   - metadata: metadata_backup
 
 Request Example
 ---------------
@@ -353,9 +359,10 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - backup: backup
-   - id: id_1
-   - links: links_1
-   - name: name_1
+   - id: id_backup
+   - links: links_backup
+   - name: name_backup
+   - metadata: metadata_backup
 
 Response Example
 ----------------
@@ -402,9 +409,9 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - backups: backups
-   - id: id_1
-   - links: links_1
-   - name: name_1
+   - id: id_backup
+   - links: links_backup
+   - name: name_backup
    - count: count
 
 Response Example
@@ -441,7 +448,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - backup_id: backup_id
+   - backup_id: backup_id_required
 
 
 Response Parameters
@@ -487,7 +494,7 @@ Request
 .. rest_parameters:: parameters.yaml
 
    - project_id: project_id_path
-   - backup_id: backup_id
+   - backup_id: backup_id_required
    - backup-record: backup_record
    - backup_service: backup_service
    - backup_url: backup_url
@@ -505,9 +512,9 @@ Response Parameters
 
 .. rest_parameters:: parameters.yaml
 
-   - id: id_1
-   - links: links_1
-   - name: name_1
+   - id: id_backup
+   - links: links_backup
+   - name: name_backup
 
 Response Example
 ----------------

@@ -307,7 +307,7 @@ class NetAppCmodeNfsDriverTestCase(test.TestCase):
             self.driver.zapi_client, 'get_operational_lif_addresses',
             return_value=[fake.SHARE_IP])
         mock_resolve_hostname = self.mock_object(
-            na_utils, 'resolve_hostname', return_value=fake.SHARE_IP)
+            utils, 'resolve_hostname', return_value=fake.SHARE_IP)
         mock_get_flexvol = self.mock_object(
             self.driver.zapi_client, 'get_flexvol',
             return_value={'name': fake.NETAPP_VOLUME})
@@ -330,7 +330,7 @@ class NetAppCmodeNfsDriverTestCase(test.TestCase):
         self.mock_object(self.driver.zapi_client,
                          'get_operational_lif_addresses',
                          return_value=[])
-        self.mock_object(na_utils,
+        self.mock_object(utils,
                          'resolve_hostname',
                          return_value=fake.SHARE_IP)
 
@@ -344,7 +344,7 @@ class NetAppCmodeNfsDriverTestCase(test.TestCase):
         self.mock_object(self.driver.zapi_client,
                          'get_operational_lif_addresses',
                          return_value=[fake.SHARE_IP])
-        self.mock_object(na_utils,
+        self.mock_object(utils,
                          'resolve_hostname',
                          return_value=fake.SHARE_IP)
         side_effect = exception.VolumeBackendAPIException(data='fake_data')
@@ -875,8 +875,10 @@ class NetAppCmodeNfsDriverTestCase(test.TestCase):
     @mock.patch.object(image_utils, 'convert_image')
     @mock.patch.object(image_utils, 'qemu_img_info')
     @mock.patch('os.path.exists')
+    @mock.patch('cinder.privsep.path')
     def test_copy_from_img_service_qcow2_copyoffload_workflow_success(
-            self, mock_exists, mock_qemu_img_info, mock_cvrt_image):
+            self, mock_touch, mock_exists, mock_qemu_img_info,
+            mock_cvrt_image):
         drv = self.driver
         cinder_mount_point_base = '/opt/stack/data/cinder/mnt/'
         # To get the cinder mount point directory, we use:
@@ -933,11 +935,10 @@ class NetAppCmodeNfsDriverTestCase(test.TestCase):
                     '203.0.113.122', '/openstack/glance-flexvol1',
                     destination_copied_file, run_as_root=False,
                     check_exit_code=0
-                ),
-                mock.call('touch', cinder_mount_point, run_as_root=False)
+                )
             ]
         )
-        self.assertEqual(2, drv._execute.call_count)
+        self.assertEqual(1, drv._execute.call_count)
         self.assertEqual(2, drv._delete_file_at_path.call_count)
         self.assertEqual(1, drv._clone_file_dst_exists.call_count)
 
@@ -1129,18 +1130,20 @@ class NetAppCmodeNfsDriverTestCase(test.TestCase):
             fake.EXPORT_PATH, fake.IMAGE_FILE_ID, fake.VOLUME['name'],
             fake.VSERVER_NAME, dest_exists=True)
 
-    def test_get_source_ip_and_path(self):
+    @ddt.data((fake.NFS_SHARE, fake.SHARE_IP),
+              (fake.NFS_SHARE_IPV6, fake.IPV6_ADDRESS))
+    @ddt.unpack
+    def test_get_source_ip_and_path(self, share, ip):
         self.driver._get_ip_verify_on_cluster = mock.Mock(
-            return_value=fake.SHARE_IP)
+            return_value=ip)
 
         src_ip, src_path = self.driver._get_source_ip_and_path(
-            fake.NFS_SHARE, fake.IMAGE_FILE_ID)
+            share, fake.IMAGE_FILE_ID)
 
-        self.assertEqual(fake.SHARE_IP, src_ip)
+        self.assertEqual(ip, src_ip)
         assert_path = fake.EXPORT_PATH + '/' + fake.IMAGE_FILE_ID
         self.assertEqual(assert_path, src_path)
-        self.driver._get_ip_verify_on_cluster.assert_called_once_with(
-            fake.SHARE_IP)
+        self.driver._get_ip_verify_on_cluster.assert_called_once_with(ip)
 
     def test_get_destination_ip_and_path(self):
         self.driver._get_ip_verify_on_cluster = mock.Mock(

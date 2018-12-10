@@ -10,16 +10,17 @@
 # Andreas Jaeger <jaegerandi@gmail.com>, 2016. #zanata
 # Ian Y. Choi <ianyrchoi@gmail.com>, 2017. #zanata
 # Jaewook Oh <kyle.oh95@gmail.com>, 2018. #zanata
+# Sungwook Choi <csucom@gmail.com>, 2018. #zanata
 msgid ""
 msgstr ""
 "Project-Id-Version: cinder VERSION\n"
 "Report-Msgid-Bugs-To: https://bugs.launchpad.net/openstack-i18n/\n"
-"POT-Creation-Date: 2018-08-09 06:04+0000\n"
+"POT-Creation-Date: 2018-10-12 20:06+0000\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"PO-Revision-Date: 2018-03-20 12:19+0000\n"
-"Last-Translator: Jaewook Oh <kyle.oh95@gmail.com>\n"
+"PO-Revision-Date: 2018-09-20 12:09+0000\n"
+"Last-Translator: Sungwook Choi <csucom@gmail.com>\n"
 "Language: ko_KR\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 "Generated-By: Babel 2.0\n"
@@ -104,6 +105,10 @@ msgstr ""
 "(를) 사용하고 있지 않은지 확인하십시오. "
 
 #, python-format
+msgid "%(name)s '%(value)s' not found"
+msgstr "%(name)s '%(value)s' 값을 찾지 못함"
+
+#, python-format
 msgid ""
 "%(op)s: backup %(bck_id)s, volume %(vol_id)s failed. Backup object has "
 "unexpected mode. Image or file backups supported, actual mode is "
@@ -161,6 +166,10 @@ msgstr "%s이(가) 없습니다."
 #, python-format
 msgid "%s is not a directory."
 msgstr "%s이(가) 디렉토리가 아닙니다. "
+
+#, python-format
+msgid "%s is not a valid log level."
+msgstr "%s는 유효한 로그 레벨이 아닙니다."
 
 #, python-format
 msgid "%s is not installed"
@@ -320,6 +329,14 @@ msgstr "볼륨 \"%s\"을(를) 읽는 중에 오류가 발생했습니다. "
 msgid "An error occurred while writing to volume \"%s\"."
 msgstr "볼륨 \"%s\"에 쓰는 중에 오류가 발생했습니다. "
 
+#, python-format
+msgid "An invalid 'name' value was provided. %(reason)s"
+msgstr "유효하지 않은 'name' 값이 제공되었습니다. %(reason)s"
+
+#, python-format
+msgid "An invalid 'target_protocol' value was provided: %(protocol)s"
+msgstr "유효하지 않은 'target_protocol' 값이 제공되었습니다 : %(protocol)s"
+
 msgid "An unknown exception occurred."
 msgstr "알 수 없는 예외가 발생했습니다."
 
@@ -409,6 +426,10 @@ msgstr "백업 RBD 조작이 실패함 "
 msgid "Backup already exists in database."
 msgstr "데이터베이스에 이미 백업이 있습니다. "
 
+#, python-format
+msgid "Backup driver reported an error: %(reason)s"
+msgstr "백업 드라이버 오류 보고서: %(reason)s"
+
 msgid "Backup id required"
 msgstr "백업 ID 필요"
 
@@ -449,6 +470,10 @@ msgid "Backup to be restored has invalid size"
 msgstr "복원할 백업이 올바르지 않은 크기임"
 
 #, python-format
+msgid "Bad HTTP response status %(status)s"
+msgstr "잘못된 HTTP 응답 상태 %(status)s"
+
+#, python-format
 msgid "Bad key(s) in quota set: %s"
 msgstr "할당량 세트의 잘못된 키: %s"
 
@@ -456,6 +481,10 @@ msgstr "할당량 세트의 잘못된 키: %s"
 msgid ""
 "Bad or unexpected response from the storage volume backend API: %(data)s"
 msgstr "스토리지 볼륨 백엔드 API로부터 잘못되었거나 예상치 못한 응답: %(data)s"
+
+#, python-format
+msgid "Bad reset resource status : %(reason)s"
+msgstr "잘못된 리셋 자원 상태 : %(reason)s"
 
 msgid "Bad response from Datera API"
 msgstr "Datera API의 잘못된 응답"
@@ -527,9 +556,6 @@ msgstr "캐시 이름이 None입니다. 키에서 smartcache:cachename을 설정
 #, python-format
 msgid "Cache volume %s does not have required properties"
 msgstr "캐시 볼륨 %s에 필수 특성이 없음"
-
-msgid "Call returned a None object"
-msgstr "호출에서 None 오브젝트를 리턴함"
 
 msgid "Can not add FC port to host."
 msgstr "호스트에 FC 포트를 추가할 수 없습니다."
@@ -657,6 +683,10 @@ msgid "Can't parse backup record."
 msgstr "백업 레코드를 구문 분석할 수 없습니다. "
 
 #, python-format
+msgid "Canceled backup %(back_id)s restore on volume %(vol_id)s"
+msgstr "취소된 백업 %(back_id)s(이)가 볼륨 %(vol_id)s에 복원됩니다."
+
+#, python-format
 msgid ""
 "Cannot attach already attached volume %s; multiattach is disabled via the "
 "'netapp_enable_multiattach' configuration option."
@@ -727,6 +757,14 @@ msgstr "암호화 스펙을 삭제할 수 없습니다. 볼륨 유형이 사용 
 msgid "Cannot find migration task."
 msgstr "마이그레이션 태스크를 찾을 수 없습니다. "
 
+#, python-format
+msgid "Cannot find requested '%s' volume type"
+msgstr "요청된 '%s' 볼륨 타입을 찾을 수 없습니다."
+
+#, python-format
+msgid "Cannot perform %(action)s during system upgrade."
+msgstr "시스템 업그레이드 중에는 %(action)s(을)를 수행할 수 없습니다."
+
 msgid "Cannot ping DRBDmanage backend"
 msgstr "DRBDmanage 백엔드에 대해 ping을 실행할 수 없음"
 
@@ -756,13 +794,6 @@ msgstr "다른 도메인의 CPG로 재입력할 수 없습니다."
 
 msgid "Cannot retype to a snap CPG in a different domain."
 msgstr "다른 도메인의 snap CPG로 재입력할 수 없습니다."
-
-msgid ""
-"Cannot run vgc-cluster command, please ensure software is installed and "
-"permissions are set properly."
-msgstr ""
-"vgc-cluster 명령을 실행할 수 없습니다. 소프트웨어가 설치되어 있으며 권한이 적"
-"절하게 설정되어 있는지 확인하십시오. "
 
 msgid "Cannot specify both protection domain name and protection domain id."
 msgstr "보호 도메인 이름과 보호 도메인 ID를 모두 지정할 수 없습니다. "
@@ -835,15 +866,23 @@ msgstr ""
 "복제 유형 '%(clone_type)s'이(가) 올바르지 않습니다. 올바른 값: "
 "'%(full_clone)s' 및 '%(linked_clone)s'."
 
+#, python-format
+msgid "Cluster %(id)s could not be found."
+msgstr "%(id)s 클러스터를 찾을 수 없습니다."
+
+#, python-format
+msgid "Cluster %(id)s still has hosts."
+msgstr "%(id)s 클러스터가 아직 호스트를 가지고 있습니다."
+
+#, python-format
+msgid "Cluster %(name)s already exists."
+msgstr "%(name)s(이)라는 이름을 가진 클라스터가 이미 존재합니다."
+
 msgid ""
 "Cluster is not formatted. You should probably perform \"dog cluster format\"."
 msgstr ""
 "클러스터가 형식화되지 않았습니다. \"dog 클러스터 형식화\"를 수행해야 할 수 있"
 "습니다. "
-
-#, python-format
-msgid "Command %(cmd)s blocked in the CLI and was cancelled"
-msgstr "명령 %(cmd)s이(가) CLI에서 차단되어 취소됨"
 
 #, python-format
 msgid "CommandLineHelper._wait_for_condition: %s timeout."
@@ -970,9 +1009,6 @@ msgstr ""
 "사용할 Swift 엔드포인트를 판별하지 못했습니다. 서비스 카탈로그에서 또는 "
 "cinder.conf 구성 옵션 'backup_swift_url'을 사용하여 Swift 엔드포인트를 설정"
 "할 수 있습니다."
-
-msgid "Could not find DISCO wsdl file."
-msgstr "DISCO wsdl 파일을 찾을 수 없습니다."
 
 #, python-format
 msgid "Could not find GPFS cluster id: %s."
@@ -1109,9 +1145,6 @@ msgid ""
 "Creating and activating zone set failed: (Zone set=%(zoneset)s error="
 "%(err)s)."
 msgstr "구역 세트 작성 및 활성화에 실패: (구역 세트=%(zoneset)s 오류=%(err)s)."
-
-msgid "Current host isn't part of HGST domain."
-msgstr "현재 호스트가 HGST 도메인의 일부가 아닙니다. "
 
 #, python-format
 msgid ""
@@ -1758,14 +1791,6 @@ msgid "Error in SolidFire API response: data=%(data)s"
 msgstr "SolidFire API 응답의 오류: 데이터=%(data)s"
 
 #, python-format
-msgid "Error in space-create for %(space)s of size %(size)d GB"
-msgstr "크기가 %(size)dGB인 %(space)s에 대한 공간 작성 시 오류 발생"
-
-#, python-format
-msgid "Error in space-extend for volume %(space)s with %(size)d additional GB"
-msgstr "추가로 %(size)dGB를 가진 볼륨 %(space)s에 대한 공간 확장 시 오류 발생"
-
-#, python-format
 msgid "Error managing volume: %s."
 msgstr "볼륨 관리 중 오류 발생: %s."
 
@@ -1867,47 +1892,9 @@ msgid "Error while creating authentication token: %s"
 msgstr "인증 토큰을 작성하는 중에 오류 발생: %s"
 
 #, python-format
-msgid "Error while creating snapshot [status] %(stat)s - [result] %(res)s."
-msgstr ""
-"스냅샷 [status] %(stat)s - [result] %(res)s을(를) 생성하는 중에 오류가 발생했"
-"습니다."
-
-#, python-format
-msgid "Error while creating volume [status] %(stat)s - [result] %(res)s."
-msgstr ""
-"볼륨 [status] %(stat)s - [result] %(res)s을(를) 생성하는 중에 오류가 발생했습"
-"니다."
-
-#, python-format
-msgid "Error while deleting snapshot [status] %(stat)s - [result] %(res)s"
-msgstr ""
-"스냅샷 [status] %(stat)s - [result] %(res)s을(를) 삭제하는 중에 오류가 발생했"
-"습니다."
-
-#, python-format
-msgid "Error while deleting volume [status] %(stat)s - [result] %(res)s."
-msgstr ""
-"볼륨 [status] %(stat)s - [result] %(res)s을(를) 삭제하는 중에 오류가 발생했습"
-"니다."
-
-#, python-format
-msgid "Error while extending volume [status] %(stat)s - [result] %(res)s."
-msgstr ""
-"볼륨 [status] %(stat)s - [result] %(res)s을(를) 확장하는 중에 오류가 발생했습"
-"니다."
-
-#, python-format
-msgid "Error while getting %(op)s details, returned code: %(status)s."
-msgstr "%(op)s 세부 사항을 가져오는 중에 오류 발생, 리턴 코드: %(status)s."
-
-#, python-format
 msgid "Error while getting data via ssh: (command=%(cmd)s error=%(err)s)."
 msgstr ""
 "ssh를 통해 데이터를 가져오는 동안 오류 발생: (명령=%(cmd)s 오류=%(err)s)."
-
-#, python-format
-msgid "Error while getting disco information [%s]."
-msgstr "disco 정보 [%s]을(를) 가져오는 중에 오류가 발생했습니다."
 
 #, python-format
 msgid "Error while getting nvp value: %s."
@@ -1951,24 +1938,6 @@ msgstr ""
 msgid "Error writing field to database"
 msgstr "데이터베이스에 필드 쓰기 오류"
 
-#, python-format
-msgid "Error[%(stat)s - %(res)s] while getting volume id."
-msgstr "볼륨 id를 가져오는 동안 오류[%(stat)s - %(res)s]이(가) 발생했습니다."
-
-#, python-format
-msgid ""
-"Error[%(stat)s - %(res)s] while restoring snapshot [%(snap_id)s] into volume "
-"[%(vol)s]."
-msgstr ""
-"스냅샷 [%(snap_id)s]을(를) 볼륨 [%(vol)s]에 복원하는 동안 오류[%(stat)s - "
-"%(res)s]이(가) 발생했습니다."
-
-#, python-format
-msgid "Error[status] %(stat)s - [result] %(res)s] while getting volume id."
-msgstr ""
-"볼륨 id를 가져오는 동안 오류[status] %(stat)s - [result] %(res)s]이(가)  발생"
-"했습니다."
-
 msgid "Exceeded the limit of snapshots per volume"
 msgstr "볼륨당 스냅샷 한계를 초과함"
 
@@ -1983,6 +1952,10 @@ msgstr "구역 문자열을 형성하는 중에 예외 발생: %s."
 #, python-format
 msgid "Exception: %s"
 msgstr "예외: %s"
+
+#, python-format
+msgid "Expected a UUID but received %(uuid)s."
+msgstr "UUID가 필요하나, %(uuid)s를 받았습니다."
 
 #, python-format
 msgid "Expected exactly one node called \"%s\""
@@ -2030,10 +2003,6 @@ msgstr ""
 
 msgid "Extend volume error."
 msgstr "볼륨 확장 오류입니다. "
-
-msgid ""
-"Extend volume is only supported for this driver when no snapshots exist."
-msgstr "스냅샷이 없는 경우에만 이 드라이버에 대해 확장 볼륨이 지원됩니다. "
 
 msgid "Extend volume not implemented"
 msgstr "볼륨 확장이 구현되지 않음"
@@ -2563,6 +2532,10 @@ msgid "Failed to update snapshot."
 msgstr "스냅샷을 업데이트하는 데 실패했습니다."
 
 #, python-format
+msgid "Failed to verify image signature, reason: %(reason)s."
+msgstr "이미지 서명 검증 실패. 사유 : %(reason)s"
+
+#, python-format
 msgid ""
 "Failed updating volume %(vol_id)s metadata using the provided %(src_type)s "
 "%(src_id)s metadata"
@@ -2635,6 +2608,9 @@ msgstr "%s에 파일이 이미 있습니다. "
 #, python-format
 msgid "File already exists at: %s"
 msgstr "%s에 파일이 이미 있음"
+
+msgid "Filter keys can only contain ASCII characters."
+msgstr "필터 키는 ASCII 문자만 포함할 수 있습니다."
 
 msgid "Find host in hostgroup error."
 msgstr "호스트 그룹에서 호스트 찾기 오류입니다. "
@@ -2827,6 +2803,10 @@ msgid "Folder %s does not exist in Nexenta Store appliance"
 msgstr "폴더 %s이(가) Nexenta Store 어플라이언스에 없음"
 
 #, python-format
+msgid "GPFS driver unsupported operation: %(msg)s"
+msgstr "GPFS 드라이버 미지원 기능: %(msg)s"
+
+#, python-format
 msgid "GPFS is not running, state: %s."
 msgstr "GPFS가 실행 중이 아닙니다. 상태: %s."
 
@@ -2988,6 +2968,29 @@ msgstr "Google Cloud Storage oauth2 실패: %(reason)s"
 msgid "Got bad path information from DRBDmanage! (%s)"
 msgstr "DRBDmanage에서 잘못된 경로 정보를 가져왔습니다(%s)! "
 
+#, python-format
+msgid "Group Type %(id)s already exists."
+msgstr "%(id)s 그룹 유형이 이미 존재합니다."
+
+#, python-format
+msgid "Group type %(group_type_id)s could not be found."
+msgstr "%(group_type_id)s 그룹 유형을 찾을 수 없습니다."
+
+#, python-format
+msgid "Group type encryption for type %(type_id)s already exists."
+msgstr "%(type_id)s 타입에 대한 그룹 유형 암호화가 이미 존재합니다."
+
+#, python-format
+msgid "Group type encryption for type %(type_id)s does not exist."
+msgstr "%(type_id)s 타입에 대한 그룹 유형 암호화가 존재하지 않습니다."
+
+msgid "Group type name can not be empty."
+msgstr "그룹 유형 이름은 빈 상태로 둘 수 없습니다."
+
+#, python-format
+msgid "Group type with name %(group_type_name)s could not be found."
+msgstr "%(group_type_name)s(이)라는 이름을 가진 그룹 유형을 찾을 수 없습니다."
+
 msgid "HPELeftHand url not found"
 msgstr "HPELeftHand url을 찾을 수 없음"
 
@@ -3013,6 +3016,9 @@ msgstr "%(host)s 호스트를 찾을 수 없습니다. "
 #, python-format
 msgid "Host %s has no FC initiators"
 msgstr "%s 호스트에 FC 개시자가 없음"
+
+msgid "Host field is missing."
+msgstr "호스트 필드가 누락됨"
 
 #, python-format
 msgid "Host group with name %s not found"
@@ -3088,8 +3094,15 @@ msgstr "%(image_id)s 이미지가 활성 상태가 아닙니다. "
 msgid "Image %(image_id)s is unacceptable: %(reason)s"
 msgstr "%(image_id)s 이미지는 허용할 수 없음: %(reason)s"
 
+#, python-format
+msgid "Image %(image_id)s size exceeded available disk space: %(reason)s"
+msgstr "%(image_id)s 이미지가 디스크 용량을 초과하였습니다 : %(reason)s"
+
 msgid "Image location not present."
 msgstr "이미지 위치가 없습니다."
+
+msgid "Image quota exceeded"
+msgstr "이미지 용량이 초과되었습니다."
 
 #, python-format
 msgid ""
@@ -3138,6 +3151,18 @@ msgstr "올바르지 않은 Cg 스냅샷: %(reason)s"
 #, python-format
 msgid "Invalid ConsistencyGroup: %(reason)s"
 msgstr "올바르지 않은 일관성 그룹: %(reason)s"
+
+#, python-format
+msgid "Invalid Group Status: %(reason)s"
+msgstr "유효하지 않은 그룹 상태 : %(reason)s"
+
+#, python-format
+msgid "Invalid Group: %(reason)s"
+msgstr "유효하지 않은 그룹: %(reason)s"
+
+#, python-format
+msgid "Invalid GroupSnapshot: %(reason)s"
+msgstr "유효하지 않은 그룹 스냅샷: %(reason)s"
 
 #, python-format
 msgid ""
@@ -3228,6 +3253,14 @@ msgstr "올바르지 않은 디스크 유형: %(disk_type)s."
 #, python-format
 msgid "Invalid disk type: %s."
 msgstr "올바르지 않은 디스크 유형: %s."
+
+#, python-format
+msgid "Invalid filter keys: %s"
+msgstr "유효하지 않은 필터 키 : %s"
+
+#, python-format
+msgid "Invalid filters %s are found in query options."
+msgstr "쿼리 옵션에서 유효하지 않은 %s 필터가 발견되었습니다."
 
 #, python-format
 msgid "Invalid group type: %(reason)s"
@@ -3581,6 +3614,10 @@ msgstr ""
 msgid "May specify only one of %s"
 msgstr "%s 중 하나만 지정할 수 있음 "
 
+#, python-format
+msgid "Message %(message_id)s could not be found."
+msgstr "%(message_id)s 메시지를 찾을 수 없습니다."
+
 msgid "Metadata backup already exists for this volume"
 msgstr "이 볼륨에 대한 메타데이터 백업이 이미 존재함"
 
@@ -3606,6 +3643,10 @@ msgstr "파이버 채널 SAN 구성 매개변수 누락 - fc_fabric_names"
 
 msgid "Missing request body."
 msgstr "요청 본문이 누락되었습니다. "
+
+#, python-format
+msgid "Missing required element '%(element)s' in request body."
+msgstr "request body 내 필요 항목 '%(element)s' 누락"
 
 #, python-format
 msgid "Missing required element '%s' in request body."
@@ -3832,6 +3873,10 @@ msgid "No snapshot image found in snapshot group %s."
 msgstr "스냅샷 그룹 %s에서 스냅샷 이미지를 찾을 수 없습니다. "
 
 #, python-format
+msgid "No snapshots found for volume %(volume_id)s."
+msgstr "%(volume_id)s 볼륨에 대한 스냅샷이 없습니다."
+
+#, python-format
 msgid "No such QoS spec %(specs_id)s."
 msgstr "해당하는 QoS 스펙 %(specs_id)s이(가) 없습니다. "
 
@@ -3853,6 +3898,10 @@ msgstr ""
 "호스트에서 사용할 수 있는 사용하지 않은 LUN ID가 없습니다. 다중 연결이 사용으"
 "로 설정되며 이를 위해서는 모든 LUN ID가 전체 호스트 그룹에서 고유해야 합니"
 "다. "
+
+#, python-format
+msgid "No valid backend was found. %(reason)s"
+msgstr "유효한 백엔드가 발견되지 않습니다. %(reason)s"
 
 #, python-format
 msgid "No vdisk with the UID specified by ref %s."
@@ -3978,6 +4027,10 @@ msgstr ""
 #, python-format
 msgid "Pools %s does not exist"
 msgstr "Pools %s이(가) 존재하지 않음"
+
+#, python-format
+msgid "Programming error in Cinder: %(reason)s"
+msgstr "Cinder 내 프로그래밍 오류: %(reason)s"
 
 msgid "Project ID"
 msgstr "프로젝트 ID"
@@ -4226,6 +4279,13 @@ msgstr ""
 "요청된 볼륨 또는 스냅샷이 허용된 %(name)s 할당량을 초과합니다. 요청된 크기는 "
 "%(requested)sG이고 할당량은 %(quota)sG이며 %(consumed)sG가 이용되었습니다."
 
+#, python-format
+msgid ""
+"Requested volume size %(size)dG is larger than maximum allowed limit "
+"%(limit)dG."
+msgstr ""
+"요청받은 볼륨 크기인 %(size)dG(이)가 최대 허용 기준인 %(limit)dG보다 큽니다."
+
 msgid "Required configuration not found"
 msgstr "필수 구성을 찾을 수 없음"
 
@@ -4407,6 +4467,10 @@ msgstr ""
 "표시 조작은 사용자가 범위 지정되는 프로젝트의 동일한 계층에 있는 프로젝트에 "
 "대해서만 작성될 수 있습니다. "
 
+#, python-format
+msgid "Signature metadata is incomplete for image: %(image_id)s."
+msgstr "%(image_id)s 이미지에 대한 서명 메타데이터가 완전하지 않습니다 "
+
 msgid "Size"
 msgstr "크기"
 
@@ -4546,10 +4610,6 @@ msgstr "스냅샷 중지 오류입니다. "
 msgid "Storage family %s is not supported."
 msgstr "스토리지 제품군 %s이(가) 지원되지 않습니다. "
 
-#, python-format
-msgid "Storage host %(svr)s not detected, verify name"
-msgstr "스토리지 호스트 %(svr)s이(가) 발견되지 않음, 이름 확인"
-
 msgid "Storage pool is not configured."
 msgstr "스토리지 풀이 구성되지 않았습니다."
 
@@ -4589,6 +4649,9 @@ msgstr "시스템이 압축을 지원하지 않습니다. "
 
 msgid "System is busy, retry operation."
 msgstr "시스템을 사용 중입니다. 조작을 재시도하십시오. "
+
+msgid "Target group type is still in use."
+msgstr "대상 그룹 유형은 아직 사용 중입니다."
 
 msgid "Target volume type is still in use."
 msgstr "대상 볼륨 유형이 아직 사용 중입니다."
@@ -4703,6 +4766,10 @@ msgstr "보유 수는 %s 이하여야 합니다."
 
 msgid "The snapshot cannot be created when the volume is in maintenance mode."
 msgstr "볼륨이 유지보수 모드에 있으면 스냅샷을 작성할 수 없습니다. "
+
+#, python-format
+msgid "The snapshot is unavailable: %(data)s"
+msgstr "스냅샷 사용 불가: %(data)s"
 
 msgid "The source volume for this WebDAV operation not found."
 msgstr "이 WebDAV 조작의 소스 볼륨을 찾을 수 없습니다."
@@ -4870,10 +4937,6 @@ msgstr ""
 "스냅샷 %(id)s 삭제를 위해 Nova 업데이트를 대기하는 동안 제한시간이 초과됨."
 
 #, python-format
-msgid "Timeout while calling %s "
-msgstr "%s을(를) 호출하는 동안 제한시간 초과"
-
-#, python-format
 msgid "Timeout while requesting %(service)s API."
 msgstr "%(service)s API를 요청하는 중 제한시간을 초과했습니다."
 
@@ -4927,10 +4990,6 @@ msgstr "파일 핸들을 통해 백엔드 스토리지에 액세스할 수 없�
 #, python-format
 msgid "Unable to access the backend storage via the path %(path)s."
 msgstr "경로 %(path)s을(를) 통해 백엔드 스토리지에 액세스할 수 없음."
-
-#, python-format
-msgid "Unable to add Cinder host to apphosts for space %(space)s"
-msgstr "공간 %(space)s에 대한 apphosts에 Cinder 호스트를 추가할 수 없음"
 
 #, python-format
 msgid "Unable to complete failover of %s."
@@ -5029,6 +5088,9 @@ msgstr "이름이 %s인 Purity ref를 찾을 수 없음"
 msgid "Unable to find Volume Group: %(vg_name)s"
 msgstr "볼륨 그룹을 찾을 수 없음: %(vg_name)s"
 
+msgid "Unable to find any active VPSA controller"
+msgstr "활성화된 VPSA 컨트롤러를 찾을 수 없습니다."
+
 msgid "Unable to find failover target, no secondary targets configured."
 msgstr "장애 복구 대상을 찾을 수 없습니다. 보조 대상이 구성되지 않았습니다."
 
@@ -5054,34 +5116,6 @@ msgid ""
 msgstr ""
 "볼륨 작성에 필요한 구성 정보를 가져올 수 없음: %(errorMessage)s(이)어야 합니"
 "다."
-
-#, python-format
-msgid ""
-"Unable to get information on space %(space)s, please verify that the cluster "
-"is running and connected."
-msgstr ""
-"공간 %(space)s에 대한 정보를 가져올 수 없습니다. 클러스터가 실행 중이며 연결"
-"되어 있는지 확인하십시오. "
-
-msgid ""
-"Unable to get list of IP addresses on this host, check permissions and "
-"networking."
-msgstr ""
-"이 호스트에서 IP 주소의 목록을 가져올 수 없습니다. 권한 및 네트워킹을 확인하"
-"십시오. "
-
-msgid ""
-"Unable to get list of domain members, check that the cluster is running."
-msgstr ""
-"도메인 멤버의 목록을 가져올 수 없습니다. 클러스터가 실행 중인지 확인하십시"
-"오. "
-
-msgid ""
-"Unable to get list of spaces to make new name.  Please verify the cluster is "
-"running."
-msgstr ""
-"새 이름을 작성할 공간의 목록을 가져올 수 없습니다. 클러스터가 실행 중인지 확"
-"인하십시오. "
 
 #, python-format
 msgid "Unable to get stats for backend_name: %s"
@@ -5259,10 +5293,6 @@ msgstr ""
 "를 중단합니다. 'cinder_managed' 사용자 지정 스키마 특성을 볼륨에 추가하고 값"
 "을 False로 설정합니다. 또는 cinder 구성 정책 'zfssa_manage_policy'의 값을 "
 "'loose'로 설정하여 이 제한을 제거하십시오."
-
-#, python-format
-msgid "Unknown operation %s."
-msgstr "알 수 없는 조작 %s."
 
 #, python-format
 msgid "Unknown or unsupported command %(cmd)s"
@@ -5578,6 +5608,13 @@ msgstr ""
 msgid "Volume Type id must not be None."
 msgstr "볼륨 유형 ID가 있어야 합니다. "
 
+msgid "Volume Type is currently in use."
+msgstr "볼륨 유형이 현재 사용되고 있습니다."
+
+#, python-format
+msgid "Volume attachment could not be found with filter: %(filter)s."
+msgstr "%(filter)s 필터로 볼륨을 찾을 수 없습니다."
+
 msgid "Volume by this name already exists"
 msgstr "이 이름에 의한 볼륨이 이미 존재함"
 
@@ -5769,6 +5806,10 @@ msgstr "볼륨 유형 이름은 빈 상태로 둘 수 없습니다."
 #, python-format
 msgid "Volume type with name %(volume_type_name)s could not be found."
 msgstr "이름이 %(volume_type_name)s인 볼륨 유형을 찾을 수 없습니다. "
+
+#, python-format
+msgid "Volume type's availability zones are invalid %(az)s."
+msgstr "볼륨 타입의 가용 영역들이 올바르지 않은 %(az)s입니다. "
 
 #, python-format
 msgid "Volume: %s is already being managed by Cinder."
@@ -6565,33 +6606,6 @@ msgstr ""
 "gpfs_images_share_mode가 copy_on_write로 설정되었지만 %(vol)s과(와) %(img)s은"
 "(는)다른 파일 세트에 속합니다."
 
-#, python-format
-msgid ""
-"hgst_group %(grp)s and hgst_user %(usr)s must map to valid users/groups in "
-"cinder.conf"
-msgstr ""
-"hgst_group %(grp)s 및 hgst_user %(usr)s은(는) cinder.conf의 올바른 사용자/그"
-"룹에 맵핑되어야 함"
-
-#, python-format
-msgid "hgst_net %(net)s specified in cinder.conf not found in cluster"
-msgstr ""
-"cinder.conf에서 지정된 hgst_net %(net)s을(를) 클러스터에서 찾을 수 없음"
-
-msgid "hgst_redundancy must be set to 0 (non-HA) or 1 (HA) in cinder.conf."
-msgstr ""
-"hgst_redundancy는 cinder.conf에서 0(비HA) 또는 1(HA)로 설정해야 합니다. "
-
-msgid "hgst_space_mode must be an octal/int in cinder.conf"
-msgstr "hgst_space_mode는 cinder.conf의 octal/int여야 함"
-
-#, python-format
-msgid "hgst_storage server %(svr)s not of format <host>:<dev>"
-msgstr "hgst_storage 서버 %(svr)s의 형식이 <host>:<dev>가 아님"
-
-msgid "hgst_storage_servers must be defined in cinder.conf"
-msgstr "hgst_storage_servers가 cinder.conf에서 정의되어야 함"
-
 msgid ""
 "http service may have been abruptly disabled or put to maintenance state in "
 "the middle of this operation."
@@ -6640,6 +6654,9 @@ msgstr "iscsi 포털, %s을(를) 찾을 수 없음"
 #, python-format
 msgid "key manager error: %(reason)s"
 msgstr "주요 관리자 오류: %(reason)s"
+
+msgid "key_size must be an integer."
+msgstr "key_size는 반드시 정수여야 합니다."
 
 msgid "limit param must be an integer"
 msgstr "limit 매개변수는 정수여야 함"

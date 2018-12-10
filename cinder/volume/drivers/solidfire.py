@@ -556,7 +556,12 @@ class SolidFireDriver(san.SanISCSIDriver):
         return vlist
 
     def _get_sfvol_by_cinder_vref(self, vref):
+        # sfvols is one or more element objects returned from a list call
+        # sfvol is the single volume object that will be returned or it will
+        # be None
+        sfvols = None
         sfvol = None
+
         provider_id = vref.get('provider_id', None)
         if provider_id:
             try:
@@ -574,6 +579,10 @@ class SolidFireDriver(san.SanISCSIDriver):
                         {'startVolumeID': sf_vid,
                          'limit': 1},
                         version='8.0')['result']['volumes'][0]
+                    # Bug 1782373 validate the list returned has what we asked
+                    # for, check if there was no match
+                    if sfvol['volumeID'] != int(sf_vid):
+                        sfvol = None
                 except Exception:
                     pass
         if not sfvol:
@@ -583,18 +592,13 @@ class SolidFireDriver(san.SanISCSIDriver):
                 sfvols = self._issue_api_request(
                     'ListVolumesForAccount',
                     {'accountID': account['accountID']})['result']['volumes']
-                if len(sfvols) >= 1:
-                    sfvol = sfvols[0]
-                    break
-        if not sfvol:
-            # Hmmm, frankly if we get here there's a problem,
-            # but try one last trick
-            LOG.info("Failed to find volume by provider_id or account, "
-                     "attempting find by attributes.")
-            for v in sfvols:
-                if v['Attributes'].get('uuid', None):
-                    sfvol = v
-                    break
+                # Bug 1782373  match single vref.id encase no provider as the
+                # above call will return a list for the account
+                for sfv in sfvols:
+                    if sfv['attributes'].get('uuid', None) == vref.id:
+                        sfvol = sfv
+                        break
+
         return sfvol
 
     def _get_sfaccount_by_name(self, sf_account_name, endpoint=None):
@@ -1201,6 +1205,13 @@ class SolidFireDriver(san.SanISCSIDriver):
         matching_vags = [vag for vag in vags if vag['name'] == vag_name]
         return matching_vags
 
+    def _get_vags_by_volume(self, vol_id):
+        params = {"volumeID": vol_id}
+        vags = self._issue_api_request(
+            'GetVolumeStats',
+            params)['result']['volumeStats']['volumeAccessGroups']
+        return vags
+
     def _add_initiator_to_vag(self, iqn, vag_id):
         # Added a vag_id return as there is a chance that we might have to
         # create a new VAG if our target VAG is deleted underneath us.
@@ -1258,9 +1269,8 @@ class SolidFireDriver(san.SanISCSIDriver):
     def _remove_volume_from_vags(self, vol_id):
         # Due to all sorts of uncertainty around multiattach, on volume
         # deletion we make a best attempt at removing the vol_id from VAGs.
-        vags = self._base_get_vags()
-        targets = [v for v in vags if vol_id in v['volumes']]
-        for vag in targets:
+        vags = self._get_vags_by_volume(vol_id)
+        for vag in vags:
             self._remove_volume_from_vag(vol_id, vag['volumeAccessGroupID'])
 
     def _remove_vag(self, vag_id):
@@ -1369,7 +1379,7 @@ class SolidFireDriver(san.SanISCSIDriver):
         if volume['volume_type_id']:
             for setting in self._extract_sf_attributes_from_extra_specs(
                     volume['volume_type_id']):
-                for k, v in setting.iteritems():
+                for k, v in setting.items():
                     attributes[k] = v
 
         vname = '%s%s' % (self.configuration.sf_volume_prefix, volume['id'])
@@ -1832,6 +1842,13 @@ class SolidFireDriver(san.SanISCSIDriver):
         snap_name = self.configuration.sf_volume_prefix + cgsnapshot['id']
         self._delete_cgsnapshot_by_name(snap_name)
         return None, None
+
+    def delete_group_snapshot(self, context, group_snapshot, snapshots):
+        if vol_utils.is_group_a_cg_snapshot_type(group_snapshot):
+            return self._delete_cgsnapshot(context, group_snapshot, snapshots)
+
+        # Default implementation handles other scenarios.
+        raise NotImplementedError()
 
     def _delete_consistencygroup(self, ctxt, group, volumes):
         # TODO(chris_morrell): exception handling and return correctly updated
@@ -2337,21 +2354,26 @@ class SolidFireISCSI(iscsi_driver.SanISCSITarget):
            If the VAG is empty then the VAG is also removed.
         """
         if self.configuration.sf_enable_vag:
-            iqn = properties['initiator']
-            vag = self._get_vags_by_name(iqn)
             provider_id = volume['provider_id']
             vol_id = int(provider_id.split()[0])
 
-            if vag and not volume['multiattach']:
-                # Multiattach causes problems with removing volumes from VAGs.
-                # Compromise solution for now is to remove multiattach volumes
-                # from VAGs during volume deletion.
-                vag = vag[0]
-                vag_id = vag['volumeAccessGroupID']
-                if [vol_id] == vag['volumes']:
-                    self._remove_vag(vag_id)
-                elif vol_id in vag['volumes']:
-                    self._remove_volume_from_vag(vol_id, vag_id)
+            if properties:
+                iqn = properties['initiator']
+                vag = self._get_vags_by_name(iqn)
+
+                if vag and not volume['multiattach']:
+                    # Multiattach causes problems with removing volumes from
+                    # VAGs.
+                    # Compromise solution for now is to remove multiattach
+                    # volumes from VAGs during volume deletion.
+                    vag = vag[0]
+                    vag_id = vag['volumeAccessGroupID']
+                    if [vol_id] == vag['volumes']:
+                        self._remove_vag(vag_id)
+                    elif vol_id in vag['volumes']:
+                        self._remove_volume_from_vag(vol_id, vag_id)
+            else:
+                self._remove_volume_from_vags(vol_id)
 
         return super(SolidFireISCSI, self).terminate_connection(volume,
                                                                 properties,

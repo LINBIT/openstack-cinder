@@ -1374,7 +1374,7 @@ class RestClient(object):
             msg = (_(
                 "Can't find valid IP from rest, please check it on storage."))
             LOG.error(msg)
-            raise exception.VolumeBackendAPIException(data = msg)
+            raise exception.VolumeBackendAPIException(data=msg)
 
         if 'data' in result:
             for item in result['data']:
@@ -2374,7 +2374,7 @@ class RestClient(object):
         result = self.call(url, None, "GET", log_filter_flag=True)
 
         if result['error']['code'] != 0:
-            raise
+            raise Exception(_('Failed to get object count.'))
 
         if result.get("data"):
             return result.get("data").get("COUNT")

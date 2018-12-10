@@ -44,6 +44,7 @@ from cinder.message import message_field
 from cinder import objects
 from cinder.objects import base as objects_base
 from cinder.objects import fields
+from cinder.objects import volume_type
 from cinder.policies import attachments as attachment_policy
 from cinder.policies import services as svr_policy
 from cinder.policies import snapshot_metadata as s_meta_policy
@@ -860,29 +861,9 @@ class API(base.Base):
                               cgsnapshot_id,
                               commit_quota=True,
                               group_snapshot_id=None):
-        context.authorize(snapshot_policy.CREATE_POLICY, target_obj=volume)
+        self._create_snapshot_in_db_validate(context, volume)
 
         utils.check_metadata_properties(metadata)
-        if not volume.host:
-            msg = _("The snapshot cannot be created because volume has "
-                    "not been scheduled to any host.")
-            raise exception.InvalidVolume(reason=msg)
-
-        if volume['status'] == 'maintenance':
-            LOG.info('Unable to create the snapshot for volume, '
-                     'because it is in maintenance.', resource=volume)
-            msg = _("The snapshot cannot be created when the volume is in "
-                    "maintenance mode.")
-            raise exception.InvalidVolume(reason=msg)
-        if self._is_volume_migrating(volume):
-            # Volume is migrating, wait until done
-            msg = _("Snapshot cannot be created while volume is migrating.")
-            raise exception.InvalidVolume(reason=msg)
-
-        if volume['status'].startswith('replica_'):
-            # Can't snapshot secondary replica
-            msg = _("Snapshot of secondary replica is not allowed.")
-            raise exception.InvalidVolume(reason=msg)
 
         valid_status = ["available", "in-use"] if force else ["available"]
 
@@ -993,6 +974,10 @@ class API(base.Base):
     def _create_snapshot_in_db_validate(self, context, volume):
         context.authorize(snapshot_policy.CREATE_POLICY, target_obj=volume)
 
+        if not volume.host:
+            msg = _("The snapshot cannot be created because volume has "
+                    "not been scheduled to any host.")
+            raise exception.InvalidVolume(reason=msg)
         if volume['status'] == 'maintenance':
             LOG.info('Unable to create the snapshot for volume, '
                      'because it is in maintenance.', resource=volume)
@@ -1007,6 +992,10 @@ class API(base.Base):
             msg = _("The snapshot cannot be created when the volume is "
                     "in error status.")
             LOG.error(msg)
+            raise exception.InvalidVolume(reason=msg)
+        if volume['status'].startswith('replica_'):
+            # Can't snapshot secondary replica
+            msg = _("Snapshot of secondary replica is not allowed.")
             raise exception.InvalidVolume(reason=msg)
 
     def _create_snapshots_in_db_reserve(self, context, volume_list):
@@ -1250,8 +1239,6 @@ class API(base.Base):
     def get_snapshot_metadata_value(self, snapshot, key):
         LOG.info("Get snapshot metadata value not implemented.",
                  resource=snapshot)
-        # FIXME(jdg): Huh?  Pass?
-        pass
 
     def get_volumes_image_metadata(self, context):
         context.authorize(vol_meta_policy.GET_POLICY)
@@ -1615,7 +1602,8 @@ class API(base.Base):
         # Support specifying volume type by ID or name
         try:
             new_type = (
-                volume_types.get_by_name_or_id(context.elevated(), new_type))
+                volume_type.VolumeType.get_by_name_or_id(context.elevated(),
+                                                         new_type))
         except exception.InvalidVolumeType:
             msg = _('Invalid volume_type passed: %s.') % new_type
             LOG.error(msg)
@@ -2123,6 +2111,15 @@ class API(base.Base):
         """Create an attachment record for the specified volume."""
         ctxt.authorize(attachment_policy.CREATE_POLICY, target_obj=volume_ref)
         connection_info = {}
+        if "error" in volume_ref.status:
+            msg = ('Volume attachments can not be created if the volume '
+                   'is in an error state. '
+                   'The Volume %(volume_id)s currently has a status of: '
+                   '%(volume_status)s ') % {
+                       'volume_id': volume_ref.id,
+                       'volume_status': volume_ref.status}
+            LOG.error(msg)
+            raise exception.InvalidVolume(reason=msg)
         attachment_ref = self._attachment_reserve(ctxt,
                                                   volume_ref,
                                                   instance_uuid)
@@ -2167,6 +2164,14 @@ class API(base.Base):
         ctxt.authorize(attachment_policy.UPDATE_POLICY,
                        target_obj=attachment_ref)
         volume_ref = objects.Volume.get_by_id(ctxt, attachment_ref.volume_id)
+        if "error" in volume_ref.status:
+            msg = ('Volume attachments can not be updated if the volume '
+                   'is in an error state. The Volume %(volume_id)s '
+                   'currently has a status of: %(volume_status)s ') % {
+                       'volume_id': volume_ref.id,
+                       'volume_status': volume_ref.status}
+            LOG.error(msg)
+            raise exception.InvalidVolume(reason=msg)
         connection_info = (
             self.volume_rpcapi.attachment_update(ctxt,
                                                  volume_ref,

@@ -567,6 +567,9 @@ class Volume(cleanable.CinderCleanableObject, base.CinderObject,
     def is_replicated(self):
         return self.volume_type and self.volume_type.is_replicated()
 
+    def is_multiattach(self):
+        return self.volume_type and self.volume_type.is_multiattach()
+
 
 @base.CinderObjectRegistry.register
 class VolumeList(base.ObjectListBase, base.CinderObject):
@@ -597,7 +600,7 @@ class VolumeList(base.ObjectListBase, base.CinderObject):
 
     @classmethod
     def _get_expected_attrs(cls, context, *args, **kwargs):
-        expected_attrs = ['metadata', 'volume_type']
+        expected_attrs = ['metadata', 'volume_type', 'volume_attachment']
         if context.is_admin:
             expected_attrs.append('admin_metadata')
 

@@ -149,8 +149,10 @@ modindex_common_prefix = ['cinder.']
 # List of tuples 'sourcefile', 'target', u'title', u'Authors name', 'manual'
 
 man_pages = [
-    ('man/cinder-manage', 'cinder-manage', u'Cloud controller fabric',
-     [u'OpenStack'], 1)
+    ('cli/cinder-manage', 'cinder-manage', u'Cloud controller fabric',
+     [u'OpenStack'], 1),
+    ('cli/cinder-status', 'cinder-status', u'Upgrade checking utility',
+     [u'OpenStack'], 1),
 ]
 
 # -- Options for HTML output --------------------------------------------------
@@ -188,6 +190,9 @@ html_theme = 'openstackdocs'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
+
+# Add any paths that contain "extra" files, such as .htaccess.
+html_extra_path = ['_extra']
 
 # If not '', a 'Last updated on:' timestamp is inserted at every page bottom,
 # using the given strftime format.

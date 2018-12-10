@@ -27,12 +27,37 @@ from cinder import context
 from cinder import exception
 from cinder.objects import fields
 from cinder import test
+from cinder.tests.unit import fake_group_snapshot
+from cinder.tests.unit import fake_snapshot
 from cinder.tests.unit.image import fake as fake_image
 from cinder.tests.unit import utils as test_utils
 from cinder.volume import configuration as conf
 from cinder.volume.drivers import solidfire
 from cinder.volume import qos_specs
 from cinder.volume import volume_types
+
+
+class mock_vref(object):
+    def __init__(self):
+        self._name_id = None
+        self.admin_metadata = {}
+        self.attach_status = 'detached'
+        self.id = '262b9ce2-a71a-4fbe-830c-c20c5596caea'
+        self.project_id = '52423d9394ad4c67b3b9034da58cedbc'
+        self.provider_id = '5 4 6ecebf5d-5521-4ce1-80f3-358ebc1b9cdc'
+        self.size = 20
+
+    def __setitem__(self, item, value):
+        self.__dict__[item] = value
+
+    def __getitem__(self, item):
+        return self.__dict__[item]
+
+    def get(self, item, arg2 = None):
+        return self.__dict__[item]
+
+f_uuid = ['262b9ce2-a71a-4fbe-830c-c20c5596caea',
+          '362b9ce2-a71a-4fbe-830c-c20c5596caea']
 
 
 @ddt.ddt
@@ -74,7 +99,9 @@ class SolidFireVolumeTestCase(test.TestCase):
                             'size': 1,
                             'id': 'a720b3c0-d1f0-11e1-9b23-0800200c9a66',
                             'volume_type_id': 'fast',
-                            'created_at': timeutils.utcnow()}
+                            'created_at': timeutils.utcnow(),
+                            'attributes':
+                            {'uuid': '262b9ce2-a71a-4fbe-830c-c20c5596caea'}}
         self.fake_image_meta = {'id': '17c550bb-a411-44c0-9aaf-0d96dd47f501',
                                 'updated_at': datetime.datetime(2013, 9,
                                                                 28, 15,
@@ -164,7 +191,7 @@ class SolidFireVolumeTestCase(test.TestCase):
                              'enable512e': True,
                              'access': "readWrite",
                              'status': "active",
-                             'attributes': {},
+                             'attributes': {'uuid': f_uuid[0]},
                              'qos': None,
                              'iqn': test_name}]}}
             return result
@@ -184,6 +211,35 @@ class SolidFireVolumeTestCase(test.TestCase):
                              'qos': None,
                              'iqn': test_name}]}}
             return result
+        elif method is 'ListVolumes':
+            test_name = "get_sfvol_by_cinder"
+            result = {'result': {
+                'volumes': [{'volumeID': 5,
+                             'name': test_name,
+                             'accountID': 8,
+                             'sliceCount': 1,
+                             'totalSize': int(1.75 * units.Gi),
+                             'enable512e': True,
+                             'access': "readWrite",
+                             'status': "active",
+                             'attributes': {'uuid': f_uuid[0]},
+                             'qos': None,
+                             'iqn': test_name},
+                            {'volumeID': 15,
+                             'name': test_name,
+                             'accountID': 8,
+                             'sliceCount': 1,
+                             'totalSize': int(1.75 * units.Gi),
+                             'enable512e': True,
+                             'access': "readWrite",
+                             'status': "active",
+                             'attributes': {'uuid': f_uuid[1]},
+                             'qos': None,
+                             'iqn': test_name}]}}
+            for v in result['result']['volumes']:
+                if int(v['volumeID']) == int(params['startVolumeID']):
+                    break
+            return v
         elif method is 'DeleteSnapshot':
             return {'result': {}}
         elif method is 'GetClusterVersionInfo':
@@ -499,6 +555,116 @@ class SolidFireVolumeTestCase(test.TestCase):
                          self.fake_issue_api_request_fails)
         self.assertRaises(exception.SolidFireAPIException,
                           sfv._get_sfaccount_by_name, 'some-name')
+
+    def test_get_sfvol_by_cinder_vref_no_provider_id(self):
+        fake_sfaccounts = [{'accountID': 25,
+                            'name': 'testprjid',
+                            'targetSecret': 'shhhh',
+                            'username': 'john-wayne',
+                            'volumes': [6, 7, 20]}]
+        self.mock_vref = mock_vref()
+
+        vol_result = {'volumeID': 5,
+                      'name': 'test_volume',
+                      'accountID': 25,
+                      'sliceCount': 1,
+                      'totalSize': 1 * units.Gi,
+                      'enable512e': True,
+                      'access': "readWrite",
+                      'status': "active",
+                      'attributes': {'uuid': f_uuid[0]},
+                      'qos': None,
+                      'iqn': 'super_fake_iqn'}
+
+        mod_conf = self.configuration
+        mod_conf.sf_enable_vag = True
+        sfv = solidfire.SolidFireDriver(configuration=mod_conf)
+        with mock.patch.object(sfv,
+                               '_get_sfaccounts_for_tenant',
+                               return_value = fake_sfaccounts), \
+                mock.patch.object(sfv, '_issue_api_request',
+                                  side_effect = self.fake_issue_api_request):
+            self.mock_vref['provider_id'] = None
+            sfvol = sfv._get_sfvol_by_cinder_vref(self.mock_vref)
+            self.assertIsNotNone(sfvol)
+            self.assertEqual(sfvol['attributes']['uuid'],
+                             vol_result['attributes']['uuid'])
+            self.assertEqual(sfvol['volumeID'], vol_result['volumeID'])
+
+    def test_get_sfvol_by_cinder_vref_no_provider_id_nomatch(self):
+        fake_sfaccounts = [{'accountID': 5,
+                            'name': 'testprjid',
+                            'targetSecret': 'shhhh',
+                            'username': 'john-wayne',
+                            'volumes': [5, 6, 7, 8]}]
+
+        self.mock_vref = mock_vref()
+        mod_conf = self.configuration
+        mod_conf.sf_enable_vag = True
+
+        sfv = solidfire.SolidFireDriver(configuration=mod_conf)
+        with mock.patch.object(sfv,
+                               '_get_sfaccounts_for_tenant',
+                               return_value = fake_sfaccounts), \
+                mock.patch.object(sfv, '_issue_api_request',
+                                  side_effect = self.fake_issue_api_request):
+            self.mock_vref['provider_id'] = None
+            self.mock_vref['id'] = '142b9c32-a71A-4fbe-830c-c20c5596caea'
+            sfvol = sfv._get_sfvol_by_cinder_vref(self.mock_vref)
+            self.assertIsNone(sfvol)
+
+    def test_get_sfvol_by_cinder_vref_nomatch(self):
+        fake_sfaccounts = [{'accountID': 5,
+                            'name': 'testprjid',
+                            'targetSecret': 'shhhh',
+                            'username': 'john-wayne',
+                            'volumes': [5, 6, 7, 8]}]
+
+        self.mock_vref = mock_vref()
+        mod_conf = self.configuration
+        mod_conf.sf_enable_vag = True
+        sfv = solidfire.SolidFireDriver(configuration=mod_conf)
+        with mock.patch.object(sfv,
+                               '_get_sfaccounts_for_tenant',
+                               return_value = fake_sfaccounts), \
+                mock.patch.object(sfv, '_issue_api_request',
+                                  side_effect = self.fake_issue_api_request):
+            p_i = '324 8 6ecebf5d-5521-4ce1-80f3-358ebc1b9cdc'
+            self.mock_vref['provider_id'] = p_i
+            self.mock_vref['id'] = '142b9c32-a71A-4fbe-830c-c20c5596caea'
+            sfvol = sfv._get_sfvol_by_cinder_vref(self.mock_vref)
+            self.assertIsNone(sfvol)
+
+    def test_get_sfvol_by_cinder_vref(self):
+        fake_sfaccounts = [{'accountID': 5,
+                            'name': 'testprjid',
+                            'targetSecret': 'shhhh',
+                            'username': 'john-wayne',
+                            'volumes': [5, 6, 7, 8]}]
+
+        self.mock_vref = mock_vref()
+
+        get_vol_result = {'volumeID': 5,
+                          'name': 'test_volume',
+                          'accountID': 25,
+                          'sliceCount': 1,
+                          'totalSize': 1 * units.Gi,
+                          'enable512e': True,
+                          'access': "readWrite",
+                          'status': "active",
+                          'attributes': {'uuid': f_uuid[0]},
+                          'qos': None,
+                          'iqn': 'super_fake_iqn'}
+
+        sfv = solidfire.SolidFireDriver(configuration=self.configuration)
+        with mock.patch.object(sfv, '_get_sfaccounts_for_tenant',
+                               return_value = fake_sfaccounts), \
+                mock.patch.object(sfv, '_issue_api_request',
+                                  side_effect = self.fake_issue_api_request):
+
+            sfvol = sfv._get_sfvol_by_cinder_vref(self.mock_vref)
+            self.assertIsNotNone(sfvol)
+            self.assertEqual(get_vol_result['volumeID'], sfvol['volumeID'])
 
     def test_delete_volume(self):
         vol_id = 'a720b3c0-d1f0-11e1-9b23-0800200c9a66'
@@ -1275,6 +1441,45 @@ class SolidFireVolumeTestCase(test.TestCase):
             sfv._sf_terminate_connection(testvol, connector, False)
             rem_vag.assert_called_with(vol_id, vag_id)
 
+    def test_sf_term_conn_without_connector(self):
+        # Verify we correctly force the deletion of a volume.
+        mod_conf = self.configuration
+        mod_conf.sf_enable_vag = True
+        sfv = solidfire.SolidFireDriver(configuration=mod_conf)
+        testvol = {'project_id': 'testprjid',
+                   'name': 'testvol',
+                   'size': 1,
+                   'id': 'a720b3c0-d1f0-11e1-9b23-0800200c9a66',
+                   'volume_type_id': None,
+                   'provider_location': '10.10.7.1:3260 iqn.2010-01.com.'
+                                        'solidfire:87hg.uuid-2cc06226-cc'
+                                        '74-4cb7-bd55-14aed659a0cc.4060 0',
+                   'provider_auth': 'CHAP stack-1-a60e2611875f40199931f2'
+                                    'c76370d66b 2FE0CQ8J196R',
+                   'provider_geometry': '4096 4096',
+                   'created_at': timeutils.utcnow(),
+                   'provider_id': "1 1 1",
+                   'multiattach': False
+                   }
+        provider_id = testvol['provider_id']
+        vol_id = int(provider_id.split()[0])
+        vag_id = 1
+        vags = [{'attributes': {},
+                 'deletedVolumes': [],
+                 'initiators': ['iqn.2012-07.org.fake:01'],
+                 'name': 'fakeiqn',
+                 'volumeAccessGroupID': vag_id,
+                 'volumes': [1, 2],
+                 'virtualNetworkIDs': []}]
+
+        with mock.patch.object(sfv,
+                               '_get_vags_by_volume',
+                               return_value=vags), \
+            mock.patch.object(sfv,
+                              '_remove_volume_from_vags') as rem_vags:
+            sfv._sf_terminate_connection(testvol, None, False)
+            rem_vags.assert_called_with(vol_id)
+
     def test_safe_create_vag_simple(self):
         # Test the sunny day call straight into _create_vag.
         sfv = solidfire.SolidFireDriver(configuration=self.configuration)
@@ -1516,7 +1721,7 @@ class SolidFireVolumeTestCase(test.TestCase):
                  'volumes': [vol_id, 43]}]
 
         with mock.patch.object(sfv,
-                               '_base_get_vags',
+                               '_get_vags_by_volume',
                                return_value=vags), \
             mock.patch.object(sfv,
                               '_remove_volume_from_vag') as rem_vol:
@@ -1797,8 +2002,8 @@ class SolidFireVolumeTestCase(test.TestCase):
         source = {'group_snapshot_id': 'typical_cgsnap_id',
                   'volume_id': 'typical_vol_id',
                   'id': 'no_id_4_u'}
-        name = (self.configuration.sf_volume_prefix
-                + source.get('group_snapshot_id'))
+        name = (self.configuration.sf_volume_prefix +
+                source.get('group_snapshot_id'))
         with mock.patch.object(sfv,
                                '_get_group_snapshot_by_name',
                                return_value={}) as get,\
@@ -1818,6 +2023,36 @@ class SolidFireVolumeTestCase(test.TestCase):
         self.assertEqual(result,
                          {'status': fields.GroupStatus.AVAILABLE})
         group_cg_test.assert_called_once_with(group)
+
+    @mock.patch('cinder.volume.utils.is_group_a_cg_snapshot_type')
+    def test_delete_group_snap_cg(self, group_cg_test):
+        sfv = solidfire.SolidFireDriver(configuration=self.configuration)
+        group_cg_test.return_value = True
+        cgsnapshot = fake_group_snapshot.fake_group_snapshot_obj(
+            mock.MagicMock())
+        snapshots = fake_snapshot.fake_snapshot_obj(mock.MagicMock())
+
+        with mock.patch.object(sfv, '_delete_cgsnapshot',
+                               return_value={}) as _del_mock:
+            model_update = sfv.delete_group_snapshot(self.ctxt,
+                                                     cgsnapshot, snapshots)
+            _del_mock.assert_called_once_with(self.ctxt, cgsnapshot, snapshots)
+            self.assertEqual({}, model_update)
+
+    @mock.patch('cinder.volume.utils.is_group_a_cg_snapshot_type')
+    def test_delete_group_snap(self, group_cg_test):
+        sfv = solidfire.SolidFireDriver(configuration=self.configuration)
+        group_cg_test.return_value = False
+        cgsnapshot = fake_group_snapshot.fake_group_snapshot_obj(
+            mock.MagicMock())
+        snapshots = fake_snapshot.fake_snapshot_obj(mock.MagicMock())
+
+        with mock.patch.object(sfv, '_delete_cgsnapshot',
+                               return_value={}) as _del_mock:
+
+            self.assertRaises(NotImplementedError, sfv.delete_group_snapshot,
+                              self.ctxt, cgsnapshot, snapshots)
+            _del_mock.assert_not_called()
 
     @mock.patch('cinder.volume.utils.is_group_a_cg_snapshot_type')
     def test_create_group_rainy(self, group_cg_test):

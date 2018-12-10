@@ -43,11 +43,11 @@ Response Parameters
    - pools: pools
    - updated: updated
    - QoS_support: QoS_support
-   - name: name
-   - total_capacity: total_capacity
+   - name: name_backend_pool
+   - total_capacity_gb: total_capacity
    - volume_backend_name: volume_backend_name
    - capabilities: capabilities
-   - free_capacity: free_capacity
+   - free_capacity_gb: free_capacity
    - driver_version: driver_version
    - reserved_percentage: reserved_percentage
    - storage_protocol: storage_protocol
