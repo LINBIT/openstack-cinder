@@ -192,7 +192,7 @@ class VolumeConnectionTestCase(base.BaseVolumeTestCase):
         connector = {'ip': 'IP', 'initiator': 'INITIATOR'}
         qos_values = {'consumer': 'front-end',
                       'specs': {
-                          'write_iops_sec_per_gb': 5,
+                          'write_iops_sec_per_gb': 30,
                           'read_iops_sec_per_gb': 7700,
                           'total_iops_sec_per_gb': 300000,
                           'read_bytes_sec_per_gb': 10,
@@ -207,7 +207,7 @@ class VolumeConnectionTestCase(base.BaseVolumeTestCase):
             type_qos.return_value = dict(qos_specs=qos_values)
             driver_init.return_value = {'data': {}}
             mock_get_target.return_value = None
-            qos_specs_expected = {'write_iops_sec': 15,
+            qos_specs_expected = {'write_iops_sec': 90,
                                   'read_iops_sec': 23100,
                                   'total_iops_sec': 900000,
                                   'read_bytes_sec': 30,
@@ -253,12 +253,13 @@ class VolumeConnectionTestCase(base.BaseVolumeTestCase):
         connector = {'ip': 'IP', 'initiator': 'INITIATOR'}
         qos_values = {'consumer': 'front-end',
                       'specs': {
-                          'write_iops_sec_per_gb_min': 15,
-                          'write_iops_sec_per_gb': 5,
+                          'write_iops_sec_per_gb_min': 800,
+                          'write_iops_sec_per_gb': 30,
                           'read_iops_sec_per_gb_min': 23100,
                           'read_iops_sec_per_gb': 7700,
                           'total_iops_sec_per_gb_min': 900000,
                           'total_iops_sec_per_gb': 300000,
+                          'total_iops_sec_max': 15000000,
                           'read_bytes_sec_per_gb_min': 30,
                           'read_bytes_sec_per_gb': 10,
                           'write_bytes_sec_per_gb_min': 120,
@@ -274,7 +275,7 @@ class VolumeConnectionTestCase(base.BaseVolumeTestCase):
             type_qos.return_value = dict(qos_specs=qos_values)
             driver_init.return_value = {'data': {}}
             mock_get_target.return_value = None
-            qos_specs_expected = {'write_iops_sec': 15,
+            qos_specs_expected = {'write_iops_sec': 800,
                                   'read_iops_sec': 23100,
                                   'total_iops_sec': 900000,
                                   'read_bytes_sec': 30,
@@ -320,12 +321,13 @@ class VolumeConnectionTestCase(base.BaseVolumeTestCase):
         connector = {'ip': 'IP', 'initiator': 'INITIATOR'}
         qos_values = {'consumer': 'front-end',
                       'specs': {
-                          'write_iops_sec_per_gb_min': 15,
-                          'write_iops_sec_per_gb': 5,
+                          'write_iops_sec_per_gb_min': 800,
+                          'write_iops_sec_per_gb': 30,
                           'read_iops_sec_per_gb_min': 23100,
                           'read_iops_sec_per_gb': 7700,
                           'total_iops_sec_per_gb_min': 900000,
                           'total_iops_sec_per_gb': 300000,
+                          'total_iops_sec_max': 15000000,
                           'read_bytes_sec_per_gb_min': 30,
                           'read_bytes_sec_per_gb': 10,
                           'write_bytes_sec_per_gb_min': 120,
@@ -341,9 +343,9 @@ class VolumeConnectionTestCase(base.BaseVolumeTestCase):
             type_qos.return_value = dict(qos_specs=qos_values)
             driver_init.return_value = {'data': {}}
             mock_get_target.return_value = None
-            qos_specs_expected = {'write_iops_sec': 500,
+            qos_specs_expected = {'write_iops_sec': 3000,
                                   'read_iops_sec': 770000,
-                                  'total_iops_sec': 30000000,
+                                  'total_iops_sec': 15000000,
                                   'read_bytes_sec': 1000,
                                   'write_bytes_sec': 4000,
                                   'total_bytes_sec': 104857600}

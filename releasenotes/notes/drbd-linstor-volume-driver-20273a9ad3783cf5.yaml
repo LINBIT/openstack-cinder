@@ -1,4 +1,4 @@
 ---
-upgrade:
+features:
   - |
-    LINBIT's DRBDManage Driver is updated to DRBD/LINSTOR Driver.
+    New Cinder volume driver for LINBIT LINSTOR resources.

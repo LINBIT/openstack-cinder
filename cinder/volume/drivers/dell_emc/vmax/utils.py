@@ -81,6 +81,9 @@ OTHER_PARENT_SG = 'other_parent_sg_name'
 FAST_SG = 'fast_managed_sg'
 NO_SLO_SG = 'no_slo_sg'
 
+# SG for unmanaged volumes
+UNMANAGED_SG = 'OS-Unmanaged'
+
 # Cinder.conf vmax configuration
 VMAX_SERVER_IP = 'san_ip'
 VMAX_USER_NAME = 'san_login'
@@ -93,6 +96,11 @@ VMAX_SRP = 'vmax_srp'
 VMAX_SERVICE_LEVEL = 'vmax_service_level'
 VMAX_PORT_GROUPS = 'vmax_port_groups'
 VMAX_SNAPVX_UNLINK_LIMIT = 'vmax_snapvx_unlink_limit'
+U4P_FAILOVER_TIMEOUT = 'u4p_failover_timeout'
+U4P_FAILOVER_RETRIES = 'u4p_failover_retries'
+U4P_FAILOVER_BACKOFF_FACTOR = 'u4p_failover_backoff_factor'
+U4P_FAILOVER_AUTOFAILBACK = 'u4p_failover_autofailback'
+U4P_FAILOVER_TARGETS = 'u4p_failover_target'
 
 
 class VMAXUtils(object):
@@ -338,6 +346,13 @@ class VMAXUtils(object):
         array = host_list[(len(host_list) - 1)]
 
         if device_id:
+            if len(device_id) != 5:
+                error_message = (_("Device ID: %(device_id)s is invalid. "
+                                   "Device ID should be exactly 5 digits.") %
+                                 {'device_id': device_id})
+                LOG.error(error_message)
+                raise exception.VolumeBackendAPIException(
+                    message=error_message)
             LOG.debug("Get device ID of existing volume - device ID: "
                       "%(device_id)s, Array: %(array)s.",
                       {'device_id': device_id,

@@ -39,7 +39,8 @@ Driver Configuration Reference
    drivers/dell-emc-vnx-driver
    drivers/dell-emc-vmax-driver
    drivers/dell-emc-vxflex-driver
-   drivers/emc-xtremio-driver
+   drivers/dell-emc-xtremio-driver
+   drivers/drbd-driver
    drivers/fujitsu-eternus-dx-driver
    drivers/hpe-3par-driver
    drivers/hpe-lefthand-driver
@@ -50,6 +51,7 @@ Driver Configuration Reference
    drivers/ibm-storage-volume-driver
    drivers/ibm-storwize-svc-driver
    drivers/infinidat-volume-driver
+   drivers/inspur-as13000-driver
    drivers/inspur-instorage-driver
    drivers/kaminario-driver
    drivers/lenovo-driver
@@ -75,3 +77,4 @@ Driver Configuration Reference
    drivers/zadara-volume-driver
    drivers/zfssa-iscsi-driver
    drivers/zfssa-nfs-driver
+   drivers/hedvig-volume-driver

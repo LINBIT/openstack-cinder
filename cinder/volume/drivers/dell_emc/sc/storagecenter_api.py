@@ -20,7 +20,6 @@ import eventlet
 from oslo_log import log as logging
 from oslo_utils import excutils
 import requests
-from simplejson import scanner
 import six
 from six.moves import http_client
 import uuid
@@ -599,8 +598,8 @@ class SCApi(object):
             LOG.error('Error invalid json: %s', blob)
         except TypeError as ex:
             LOG.error('Error TypeError. %s', ex)
-        except scanner.JSONDecodeError as ex:
-            LOG.error('Error JSONDecodeError. %s', ex)
+        except ValueError as ex:
+            LOG.error('JSON decoding error. %s', ex)
         # We are here so this went poorly. Log our blob.
         LOG.debug('_get_json blob %s', blob)
         return None
@@ -618,8 +617,8 @@ class SCApi(object):
             LOG.error('Invalid API object: %s', blob)
         except TypeError as ex:
             LOG.error('Error TypeError. %s', ex)
-        except scanner.JSONDecodeError as ex:
-            LOG.error('Error JSONDecodeError. %s', ex)
+        except ValueError as ex:
+            LOG.error('JSON decoding error. %s', ex)
         LOG.debug('_get_id failed: blob %s', blob)
         return None
 
@@ -3578,11 +3577,11 @@ class SCApi(object):
 
             r = self.client.post('StorageCenter/ScLiveVolume', payload, True)
             if self._check_result(r):
-                LOG.info('create_live_volume: Live Volume created from'
+                LOG.info('create_live_volume: Live Volume created from '
                          '%(svol)s to %(ssn)s',
                          {'svol': self._get_id(scvolume), 'ssn': remotessn})
                 return self._get_json(r)
-        LOG.error('create_live_volume: Failed to create Live Volume from'
+        LOG.error('create_live_volume: Failed to create Live Volume from '
                   '%(svol)s to %(ssn)s',
                   {'svol': self._get_id(scvolume), 'ssn': remotessn})
         return None

@@ -4,7 +4,6 @@ amqp==2.2.2
 appdirs==1.4.3
 asn1crypto==0.24.0
 automaton==1.14.0
-Babel==2.3.4
 bandit==1.1.0
 bcrypt==3.1.4
 cachetools==2.0.1
@@ -131,7 +130,6 @@ rfc3986==1.1.0
 Routes==2.3.1
 rsa==3.4.2
 rtslib-fb==2.1.65
-simplejson==3.5.1
 six==1.10.0
 smmap2==2.0.3
 snowballstemmer==1.2.1

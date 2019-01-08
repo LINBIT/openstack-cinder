@@ -119,6 +119,8 @@ from cinder.volume.drivers.ibm.storwize_svc import storwize_svc_fc as \
 from cinder.volume.drivers.ibm.storwize_svc import storwize_svc_iscsi as \
     cinder_volume_drivers_ibm_storwize_svc_storwizesvciscsi
 from cinder.volume.drivers import infinidat as cinder_volume_drivers_infinidat
+from cinder.volume.drivers.inspur.as13000 import as13000_driver as \
+    cinder_volume_drivers_inspur_as13000_as13000driver
 from cinder.volume.drivers.inspur.instorage import instorage_common as \
     cinder_volume_drivers_inspur_instorage_instoragecommon
 from cinder.volume.drivers.inspur.instorage import instorage_iscsi as \
@@ -127,6 +129,8 @@ from cinder.volume.drivers.kaminario import kaminario_common as \
     cinder_volume_drivers_kaminario_kaminariocommon
 from cinder.volume.drivers.lenovo import lenovo_common as \
     cinder_volume_drivers_lenovo_lenovocommon
+from cinder.volume.drivers import linstordrv as \
+    cinder_volume_drivers_linstordrv
 from cinder.volume.drivers import lvm as cinder_volume_drivers_lvm
 from cinder.volume.drivers.netapp import options as \
     cinder_volume_drivers_netapp_options
@@ -247,6 +251,8 @@ def list_opts():
                 cinder_volume_driver.nvmet_opts,
                 cinder_volume_drivers_datacore_driver.datacore_opts,
                 cinder_volume_drivers_datacore_iscsi.datacore_iscsi_opts,
+                cinder_volume_drivers_inspur_as13000_as13000driver.
+                inspur_as13000_opts,
                 cinder_volume_drivers_inspur_instorage_instoragecommon.
                 instorage_mcs_opts,
                 cinder_volume_drivers_inspur_instorage_instorageiscsi.
@@ -310,6 +316,7 @@ def list_opts():
                 kaminario_opts,
                 cinder_volume_drivers_lenovo_lenovocommon.common_opts,
                 cinder_volume_drivers_lenovo_lenovocommon.iscsi_opts,
+                cinder_volume_drivers_linstordrv.linstor_opts,
                 cinder_volume_drivers_lvm.volume_opts,
                 cinder_volume_drivers_netapp_options.netapp_proxy_opts,
                 cinder_volume_drivers_netapp_options.netapp_connection_opts,

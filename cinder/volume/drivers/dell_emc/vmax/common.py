@@ -21,6 +21,7 @@ import sys
 import time
 
 from oslo_config import cfg
+from oslo_config import types
 from oslo_log import log as logging
 from oslo_utils import strutils
 import six
@@ -94,7 +95,32 @@ vmax_opts = [
     cfg.ListOpt(utils.VMAX_PORT_GROUPS,
                 bounds=True,
                 help='List of port groups containing frontend ports '
-                     'configured prior for server connection.')]
+                     'configured prior for server connection.'),
+    cfg.IntOpt(utils.U4P_FAILOVER_TIMEOUT,
+               default=20.0,
+               help='How long to wait for the server to send data before '
+                    'giving up.'),
+    cfg.IntOpt(utils.U4P_FAILOVER_RETRIES,
+               default=3,
+               help='The maximum number of retries each connection should '
+                    'attempt. Note, this applies only to failed DNS lookups, '
+                    'socket connections and connection timeouts, never to '
+                    'requests where data has made it to the server.'),
+    cfg.IntOpt(utils.U4P_FAILOVER_BACKOFF_FACTOR,
+               default=1,
+               help='A backoff factor to apply between attempts after the '
+                    'second try (most errors are resolved immediately by a '
+                    'second try without a delay). Retries will sleep for: '
+                    '{backoff factor} * (2 ^ ({number of total retries} - 1)) '
+                    'seconds.'),
+    cfg.BoolOpt(utils.U4P_FAILOVER_AUTOFAILBACK,
+                default=True,
+                help='If the driver should automatically failback to the '
+                     'primary instance of Unisphere when a successful '
+                     'connection is re-established.'),
+    cfg.MultiOpt(utils.U4P_FAILOVER_TARGETS,
+                 item_type=types.Dict(),
+                 help='Dictionary of Unisphere failover target info.')]
 
 CONF.register_opts(vmax_opts, group=configuration.SHARED_CONF_GROUP)
 
@@ -134,8 +160,10 @@ class VMAXCommon(object):
         self.active_backend_id = active_backend_id
         self.failover = False
         self._get_replication_info()
+        self._get_u4p_failover_info()
         self._gather_info()
         self.version_dict = {}
+        self.nextGen = False
 
     def _gather_info(self):
         """Gather the relevant information for update_volume_stats."""
@@ -147,6 +175,9 @@ class VMAXCommon(object):
                       "configuration and note that the xml file is no "
                       "longer supported.")
         self.rest.set_rest_credentials(array_info)
+        if array_info:
+            self.nextGen = self.rest.is_next_gen_array(
+                array_info['SerialNumber'])
         finalarrayinfolist = self._get_slo_workload_combinations(
             array_info)
         self.pool_info['arrays_info'] = finalarrayinfolist
@@ -169,6 +200,84 @@ class VMAXCommon(object):
             "backend %(backendName)s.",
             {'emcConfigFileName': self.pool_info['config_file'],
              'backendName': self.pool_info['backend_name']})
+
+    def _get_u4p_failover_info(self):
+        """Gather Unisphere failover target information, if provided."""
+
+        key_dict = {'san_ip': 'RestServerIp',
+                    'san_api_port': 'RestServerPort',
+                    'san_login': 'RestUserName',
+                    'san_password': 'RestPassword',
+                    'driver_ssl_cert_verify': 'SSLVerify',
+                    'driver_ssl_cert_path': 'SSLPath'}
+
+        if self.configuration.safe_get('u4p_failover_target'):
+            u4p_targets = self.configuration.safe_get('u4p_failover_target')
+            formatted_target_list = list()
+            for target in u4p_targets:
+                formatted_target = {key_dict[key]: value for key, value in
+                                    target.items()}
+
+                try:
+                    formatted_target['SSLVerify'] = formatted_target['SSLPath']
+                    del formatted_target['SSLPath']
+                except KeyError:
+                    if formatted_target['SSLVerify'] == 'False':
+                        formatted_target['SSLVerify'] = False
+                    else:
+                        formatted_target['SSLVerify'] = True
+
+                formatted_target_list.append(formatted_target)
+
+            u4p_failover_config = dict()
+            u4p_failover_config['u4p_failover_targets'] = formatted_target_list
+            u4p_failover_config['u4p_failover_backoff_factor'] = (
+                self.configuration.safe_get('u4p_failover_backoff_factor'))
+            u4p_failover_config['u4p_failover_retries'] = (
+                self.configuration.safe_get('u4p_failover_retries'))
+            u4p_failover_config['u4p_failover_timeout'] = (
+                self.configuration.safe_get('u4p_failover_timeout'))
+            u4p_failover_config['u4p_failover_autofailback'] = (
+                self.configuration.safe_get('u4p_failover_autofailback'))
+            u4p_failover_config['u4p_primary'] = (
+                self.get_attributes_from_cinder_config())
+
+            self.rest.set_u4p_failover_config(u4p_failover_config)
+        else:
+            LOG.warning("There has been no failover instances of Unisphere "
+                        "configured for this instance of Cinder. If your "
+                        "primary instance of Unisphere goes down then your "
+                        "VMAX will be inaccessible until the Unisphere REST "
+                        "API is responsive again.")
+
+    def retest_primary_u4p(self):
+        """Retest connection to the primary instance of Unisphere."""
+        primary_array_info = self.get_attributes_from_cinder_config()
+        temp_conn = rest.VMAXRest()
+        temp_conn.set_rest_credentials(primary_array_info)
+        LOG.debug(
+            "Running connection check to primary instance of Unisphere "
+            "at %(primary)s", {
+                'primary': primary_array_info['RestServerIp']})
+        sc, response = temp_conn.request(target_uri='/system/version',
+                                         method='GET', u4p_check=True,
+                                         request_object=None)
+        if sc and int(sc) == 200:
+            self._get_u4p_failover_info()
+            self.rest.set_rest_credentials(primary_array_info)
+            self.rest.u4p_in_failover = False
+            LOG.info("Connection to primary instance of Unisphere at "
+                     "%(primary)s restored, available failover instances of "
+                     "Unisphere reset to default.", {
+                         'primary': primary_array_info['RestServerIp']})
+        else:
+            LOG.debug(
+                "Connection check to primary instance of Unisphere at "
+                "%(primary)s failed, maintaining session with backup "
+                "instance of Unisphere at %(bu_in_use)s", {
+                    'primary': primary_array_info['RestServerIp'],
+                    'bu_in_use': self.rest.base_uri})
+        temp_conn.session.close()
 
     def _get_initiator_check_flag(self):
         """Reads the configuration for initator_check flag.
@@ -219,29 +328,39 @@ class VMAXCommon(object):
                 array = self.active_backend_id
 
             slo_settings = self.rest.get_slo_list(array)
-            # Remove 'None' and 'Optimized from SL list, they cannot be mixed
-            # with workloads so will be added later again
             slo_list = [x for x in slo_settings
                         if x.lower() not in ['none', 'optimized']]
             workload_settings = self.rest.get_workload_settings(array)
-            workload_settings.append("None")
-            slo_workload_set = set()
+            workload_settings.append('None')
+            slo_workload_set = set(
+                ['%(slo)s:%(workload)s' % {'slo': slo,
+                                           'workload': workload}
+                 for slo in slo_list for workload in workload_settings])
+            slo_workload_set.add('None:None')
 
-            if self.rest.is_next_gen_array(array):
+            if self.nextGen:
+                LOG.warning("Workloads have been deprecated for arrays "
+                            "running PowerMax OS uCode level 5978 or higher. "
+                            "Any supplied workloads will be treated as None "
+                            "values. It is highly recommended to create a new "
+                            "volume type without a workload specified.")
                 for slo in slo_list:
                     slo_workload_set.add(slo)
                 slo_workload_set.add('None')
                 slo_workload_set.add('Optimized')
-            else:
-                slo_workload_set = set(
-                    ['%(slo)s:%(workload)s' % {'slo': slo,
-                                               'workload': workload}
-                     for slo in slo_list for workload in workload_settings])
-                slo_workload_set.add('None:None')
+                slo_workload_set.add('Optimized:None')
+                # If array is 5978 or greater and a VMAX AFA add legacy SL/WL
+                # combinations
+                if any(self.rest.get_vmax_model(array) in x for x in
+                       utils.VMAX_AFA_MODELS):
+                    slo_workload_set.add('Diamond:OLTP')
+                    slo_workload_set.add('Diamond:OLTP_REP')
+                    slo_workload_set.add('Diamond:DSS')
+                    slo_workload_set.add('Diamond:DSS_REP')
+                    slo_workload_set.add('Diamond:None')
 
             if not any(self.rest.get_vmax_model(array) in x for x in
-                       utils.VMAX_AFA_MODELS) and not \
-                    self.rest.is_next_gen_array(array):
+                       utils.VMAX_AFA_MODELS):
                 slo_workload_set.add('Optimized:None')
 
             finalarrayinfolist = []
@@ -641,6 +760,14 @@ class VMAXCommon(object):
             volume, connector, extra_specs)
         masking_view_dict[utils.IS_MULTIATTACH] = is_multiattach
 
+        if self.rest.is_next_gen_array(extra_specs['array']):
+            masking_view_dict['workload'] = 'NONE'
+            temp_pool = masking_view_dict['storagegroup_name']
+            splitPool = temp_pool.split('+')
+            if len(splitPool) == 4:
+                splitPool[1] = 'NONE'
+            masking_view_dict['storagegroup_name'] = '+'.join(splitPool)
+
         if ('hostlunid' in device_info_dict and
                 device_info_dict['hostlunid'] is not None):
             hostlunid = device_info_dict['hostlunid']
@@ -848,6 +975,8 @@ class VMAXCommon(object):
 
     def update_volume_stats(self):
         """Retrieve stats info."""
+        if self.rest.u4p_in_failover and self.rest.u4p_failover_autofailback:
+            self.retest_primary_u4p()
         pools = []
         # Dictionary to hold the arrays for which the SRP details
         # have already been queried.
@@ -869,7 +998,6 @@ class VMAXCommon(object):
                     self.rep_config, array_info)
             # Add both SLO & Workload name in the pool name
             # Only insert the array details in the dict once
-            self.rest.set_rest_credentials(array_info)
             if array_info['SerialNumber'] not in arrays:
                 (location_info, total_capacity_gb, free_capacity_gb,
                  provisioned_capacity_gb,
@@ -1240,8 +1368,6 @@ class VMAXCommon(object):
                 raise exception.VolumeBackendAPIException(
                     message=exception_message)
 
-            self.rest.set_rest_credentials(array_info)
-
             extra_specs = self._set_vmax_extra_specs(extra_specs, array_info)
             if qos_specs and qos_specs.get('consumer') != "front-end":
                 extra_specs['qos'] = qos_specs.get('specs')
@@ -1280,7 +1406,8 @@ class VMAXCommon(object):
         protocol = self.utils.get_short_protocol_type(self.protocol)
         short_host_name = self.utils.get_host_short_name(connector['host'])
         masking_view_dict[utils.SLO] = extra_specs[utils.SLO]
-        masking_view_dict[utils.WORKLOAD] = extra_specs[utils.WORKLOAD]
+        masking_view_dict[utils.WORKLOAD] = 'NONE' if self.nextGen else (
+            extra_specs[utils.WORKLOAD])
         masking_view_dict[utils.ARRAY] = extra_specs[utils.ARRAY]
         masking_view_dict[utils.SRP] = extra_specs[utils.SRP]
         masking_view_dict[utils.PORTGROUPNAME] = (
@@ -1482,10 +1609,12 @@ class VMAXCommon(object):
         :raises: VolumeBackendAPIException:
         """
         array = extra_specs[utils.ARRAY]
+        self.nextGen = self.rest.is_next_gen_array(array)
+        if self.nextGen:
+            extra_specs[utils.WORKLOAD] = 'NONE'
         is_valid_slo, is_valid_workload = self.provision.verify_slo_workload(
             array, extra_specs[utils.SLO],
             extra_specs[utils.WORKLOAD], extra_specs[utils.SRP])
-
         if not is_valid_slo or not is_valid_workload:
             exception_message = (_(
                 "Either SLO: %(slo)s or workload %(workload)s is invalid. "
@@ -1575,14 +1704,15 @@ class VMAXCommon(object):
             slo_from_extra_spec = pool_details[0]
             workload_from_extra_spec = pool_details[1]
             # Check if legacy pool chosen
-            if workload_from_extra_spec == pool_record['srpName']:
+            if (workload_from_extra_spec == pool_record['srpName'] or
+                    self.nextGen):
                 workload_from_extra_spec = 'NONE'
 
         elif pool_record.get('ServiceLevel'):
             slo_from_extra_spec = pool_record['ServiceLevel']
             workload_from_extra_spec = pool_record.get('Workload', 'None')
             # If workload is None in cinder.conf, convert to string
-            if not workload_from_extra_spec:
+            if not workload_from_extra_spec or self.nextGen:
                 workload_from_extra_spec = 'NONE'
             LOG.info("Pool_name is not present in the extra_specs "
                      "- using slo/ workload from cinder.conf: %(slo)s/%(wl)s.",
@@ -2163,6 +2293,24 @@ class VMAXCommon(object):
             # Rename the volume to volumeId, thus remove the 'OS-' prefix.
             self.rest.rename_volume(
                 extra_specs[utils.ARRAY], device_id, volume_id)
+            # First check/create the unmanaged sg
+            # Don't fail if we fail to create the SG
+            try:
+                self.provision.create_storage_group(
+                    extra_specs[utils.ARRAY], utils.UNMANAGED_SG,
+                    extra_specs[utils.SRP], None,
+                    None, extra_specs=extra_specs)
+            except Exception as e:
+                msg = ("Exception creating %(sg)s. "
+                       "Exception received was %(e)s."
+                       % {'sg': utils.UNMANAGED_SG,
+                          'e': six.text_type(e)})
+                LOG.warning(msg)
+                return
+            # Try to add the volume
+            self.masking._check_adding_volume_to_storage_group(
+                extra_specs[utils.ARRAY], device_id, utils.UNMANAGED_SG,
+                volume_id, extra_specs)
 
     def manage_existing_snapshot(self, snapshot, existing_ref):
         """Manage an existing VMAX Snapshot (import to Cinder).
@@ -2796,6 +2944,8 @@ class VMAXCommon(object):
                 raise IndexError
             if target_slo.lower() == 'none':
                 target_slo = None
+            if self.rest.is_next_gen_array(target_array_serial):
+                target_workload = 'NONE'
         except IndexError:
             LOG.error("Error parsing array, pool, SLO and workload.")
             return false_ret
@@ -3493,7 +3643,7 @@ class VMAXCommon(object):
                     extra_specs[utils.WORKLOAD], extra_specs,
                     do_disable_compression, is_re=True, rep_mode=rep_mode))
         except Exception as e:
-            exception_message = (_("Failed to get or create replication"
+            exception_message = (_("Failed to get or create replication "
                                    "group. Exception received: %(e)s")
                                  % {'e': six.text_type(e)})
             LOG.exception(exception_message)
@@ -4579,7 +4729,7 @@ class VMAXCommon(object):
             LOG.info("Reverted the volume to snapshot successfully")
         except Exception as e:
             exception_message = (_(
-                "Failed to revert the volume to the snapshot"
+                "Failed to revert the volume to the snapshot. "
                 "Exception received was %(e)s") % {'e': six.text_type(e)})
             LOG.error(exception_message)
             raise exception.VolumeBackendAPIException(

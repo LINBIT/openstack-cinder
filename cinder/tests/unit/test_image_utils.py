@@ -280,6 +280,41 @@ class TestConvertImage(test.TestCase):
                                           '-O', 'vpc',
                                           source, dest, run_as_root=True)
 
+    @mock.patch('cinder.image.image_utils.CONF')
+    @mock.patch('cinder.volume.utils.check_for_odirect_support',
+                return_value=True)
+    @mock.patch('cinder.image.image_utils.qemu_img_info')
+    @mock.patch('cinder.utils.execute')
+    @mock.patch('cinder.utils.is_blk_device', return_value=False)
+    @mock.patch('os.path.dirname', return_value='fakedir')
+    @mock.patch('os.path.ismount', return_value=True)
+    @mock.patch('oslo_utils.fileutils.ensure_tree')
+    @mock.patch('cinder.image.image_utils.utils.tempdir')
+    @mock.patch.object(image_utils.LOG, 'error')
+    def test_not_enough_conversion_space(self,
+                                         mock_log,
+                                         mock_tempdir,
+                                         mock_make,
+                                         mock_ismount,
+                                         mock_dirname,
+                                         mock_isblk,
+                                         mock_exec,
+                                         mock_info,
+                                         mock_odirect,
+                                         mock_conf):
+        source = mock.sentinel.source
+        mock_conf.image_conversion_dir = 'fakedir'
+        dest = [mock_conf.image_conversion_dir]
+        out_format = mock.sentinel.out_format
+        mock_info.side_effect = ValueError
+        mock_exec.side_effect = processutils.ProcessExecutionError(
+            stderr='No space left on device')
+        self.assertRaises(processutils.ProcessExecutionError,
+                          image_utils.convert_image,
+                          source, dest, out_format)
+        mock_log.assert_called_with('Insufficient free space on fakedir for'
+                                    ' imageconversion.')
+
 
 class TestResizeImage(test.TestCase):
     @mock.patch('cinder.utils.execute')
@@ -347,6 +382,26 @@ class TestFetch(test.TestCase):
                               image_utils.fetch,
                               context, image_service, image_id, path,
                               _user_id, _project_id)
+
+    def test_fetch_ioerror(self):
+        context = mock.sentinel.context
+        image_service = mock.Mock()
+        image_id = mock.sentinel.image_id
+        e = IOError()
+        e.errno = errno.ECONNRESET
+        e.strerror = 'Some descriptive message'
+        image_service.download.side_effect = e
+        path = '/test_path'
+        _user_id = mock.sentinel._user_id
+        _project_id = mock.sentinel._project_id
+
+        with mock.patch('cinder.image.image_utils.open',
+                        new=mock.mock_open(), create=True):
+            self.assertRaisesRegex(exception.ImageDownloadFailed,
+                                   e.strerror,
+                                   image_utils.fetch,
+                                   context, image_service, image_id, path,
+                                   _user_id, _project_id)
 
 
 class MockVerifier(object):

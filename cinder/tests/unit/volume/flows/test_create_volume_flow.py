@@ -67,12 +67,18 @@ class CreateVolumeFlowTestCase(test.TestCase):
                                               mock_time, mock_extract_host,
                                               volume_get_by_id):
         mock_time.side_effect = self.time_inc
-        volume = fake_volume.fake_volume_obj(self.ctxt,
-                                             host='host@backend#pool')
+        volume = fake_volume.fake_volume_obj(
+            self.ctxt,
+            host='host@backend#pool',
+            cluster_name='cluster@backend#pool')
         volume_get_by_id.return_value = volume
 
+        # This is the spec for a volume created from another resource. It
+        # includes the 'resource_backend'. When the volume is associated
+        # with a cluster the 'resource_backend' should use the cluster name.
         spec = {'volume_id': volume.id,
                 'volume': volume,
+                'resource_backend': 'cluster@backend#pool',
                 'source_volid': volume.id,
                 'snapshot_id': None,
                 'image_id': 4,
@@ -87,7 +93,13 @@ class CreateVolumeFlowTestCase(test.TestCase):
             fake_volume_api.FakeVolumeAPI(spec, self),
             fake_volume_api.FakeDb())
 
+        # Remove 'resource_backend' prior to calling task._cast_create_volume
+        # (the point of the test is to confirm that it adds it to the spec
+        # sent to the scheduler).
+        spec.pop('resource_backend')
+
         task._cast_create_volume(self.ctxt, spec, {})
+        mock_snapshot_get.assert_not_called()
         mock_extract_host.assert_not_called()
 
         snapshot = fake_snapshot.fake_snapshot_obj(self.ctxt,
@@ -96,6 +108,7 @@ class CreateVolumeFlowTestCase(test.TestCase):
 
         spec = {'volume_id': volume.id,
                 'volume': volume,
+                'resource_backend': 'cluster@backend#pool',
                 'source_volid': None,
                 'snapshot_id': snapshot.id,
                 'image_id': 4,
@@ -110,6 +123,7 @@ class CreateVolumeFlowTestCase(test.TestCase):
             fake_volume_api.FakeVolumeAPI(spec, self),
             fake_volume_api.FakeDb())
 
+        spec.pop('resource_backend')
         task._cast_create_volume(self.ctxt, spec, {})
         mock_snapshot_get.assert_called_once_with(self.ctxt, snapshot.id)
         mock_extract_host.assert_not_called()
@@ -124,10 +138,14 @@ class CreateVolumeFlowTestCase(test.TestCase):
         volume = fake_volume.fake_volume_obj(self.ctxt)
         volume_get_by_id.return_value = volume
         props = {}
-        cg_obj = (fake_consistencygroup.
-                  fake_consistencyobject_obj(self.ctxt, consistencygroup_id=1,
-                                             host='host@backend#pool'))
+        cg_obj = fake_consistencygroup.fake_consistencyobject_obj(
+            self.ctxt,
+            consistencygroup_id=1,
+            host='host@backend#pool',
+            cluster_name='cluster@backend#pool')
         consistencygroup_get_by_id.return_value = cg_obj
+        mock_extract_host.return_value = 'cluster@backend'
+
         spec = {'volume_id': None,
                 'volume': None,
                 'source_volid': None,
@@ -145,9 +163,14 @@ class CreateVolumeFlowTestCase(test.TestCase):
             fake_volume_api.FakeDb())
 
         task._cast_create_volume(self.ctxt, spec, props)
+        consistencygroup_get_by_id.assert_not_called()
+        mock_extract_host.assert_not_called()
 
+        # This is the spec for a volume created from a consistency group. It
+        # includes the 'resource_backend'.
         spec = {'volume_id': volume.id,
                 'volume': volume,
+                'resource_backend': 'cluster@backend',
                 'source_volid': 2,
                 'snapshot_id': 3,
                 'image_id': 4,
@@ -162,9 +185,14 @@ class CreateVolumeFlowTestCase(test.TestCase):
             fake_volume_api.FakeVolumeAPI(spec, self),
             fake_volume_api.FakeDb())
 
+        # Remove 'resource_backend' prior to calling task._cast_create_volume
+        # (the point of the test is to confirm that it adds it to the spec
+        # sent to the scheduler).
+        spec.pop('resource_backend')
+
         task._cast_create_volume(self.ctxt, spec, props)
         consistencygroup_get_by_id.assert_called_once_with(self.ctxt, 5)
-        mock_extract_host.assert_called_once_with('host@backend#pool')
+        mock_extract_host.assert_called_once_with('cluster@backend#pool')
 
     @mock.patch('cinder.db.volume_create')
     @mock.patch('cinder.objects.Volume.get_by_id')
@@ -1148,32 +1176,6 @@ class CreateVolumeFlowManagerTestCase(test.TestCase):
                                                      image_id=image_id,
                                                      image_meta=image_meta)
         mock_cleanup_cg.assert_called_once_with(volume)
-
-    @ddt.data(True, False)
-    def test__copy_image_to_volume(self, is_encrypted):
-        fake_db = mock.MagicMock()
-        fake_driver = mock.MagicMock()
-        fake_volume_manager = mock.MagicMock()
-        fake_manager = create_volume_manager.CreateVolumeFromSpecTask(
-            fake_volume_manager, fake_db, fake_driver)
-        key = fakes.ENCRYPTION_KEY_ID if is_encrypted else None
-        volume = fake_volume.fake_volume_obj(
-            self.ctxt,
-            encryption_key_id=key)
-
-        fake_image_service = fake_image.FakeImageService()
-        image_id = fakes.IMAGE_ID
-        image_meta = {'id': image_id}
-        image_location = 'abc'
-
-        fake_manager._copy_image_to_volume(self.ctxt, volume, image_meta,
-                                           image_location, fake_image_service)
-        if is_encrypted:
-            fake_driver.copy_image_to_encrypted_volume.assert_called_once_with(
-                self.ctxt, volume, fake_image_service, image_id)
-        else:
-            fake_driver.copy_image_to_volume.assert_called_once_with(
-                self.ctxt, volume, fake_image_service, image_id)
 
     @ddt.data({'driver_error': True},
               {'driver_error': False})

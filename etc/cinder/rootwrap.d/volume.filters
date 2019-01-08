@@ -4,9 +4,7 @@
 [Filters]
 # cinder/volume/iscsi.py: iscsi_helper '--op' ...
 ietadm: CommandFilter, ietadm, root
-tgtadm: CommandFilter, tgtadm, root
 iscsictl: CommandFilter, iscsictl, root
-tgt-admin: CommandFilter, tgt-admin, root
 cinder-rtstool: CommandFilter, cinder-rtstool, root
 scstadmin: CommandFilter, scstadmin, root
 
@@ -116,7 +114,6 @@ netapp_nfs_find: RegExpFilter, find, root, find, ^[/]*([^/\0]+(/+)?)*$, -maxdept
 
 # cinder/volume/drivers/glusterfs.py
 chgrp: CommandFilter, chgrp, root
-umount: CommandFilter, umount, root
 
 # cinder/brick/initiator/connector.py:
 ls: CommandFilter, ls, root
