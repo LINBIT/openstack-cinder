@@ -114,6 +114,9 @@ Response Parameters
    - volume_id: volume_id
    - id: id
    - name: name
+   - destination_project_id: destination_project_id
+   - source_project_id: source_project_id
+   - accepted: accepted
 
 Response Example
 ----------------
@@ -144,6 +147,11 @@ Request
 
    - project_id: project_id_path
    - all_tenants: all-tenants
+   - limit: limit_transfer
+   - offset: offset_transfer
+   - marker: marker_transfer
+   - sort_key: sort_key_transfer
+   - sort_dir: sort_dir_transfer
 
 
 Response Parameters
@@ -198,6 +206,9 @@ Response Parameters
    - id: id
    - links: links
    - name: name
+   - destination_project_id: destination_project_id
+   - source_project_id: source_project_id
+   - accepted: accepted
 
 
 Response Example
@@ -264,6 +275,9 @@ Response Parameters
    - id: id
    - links: links
    - name: name
+   - destination_project_id: destination_project_id
+   - source_project_id: source_project_id
+   - accepted: accepted
 
 Response Example
 ----------------

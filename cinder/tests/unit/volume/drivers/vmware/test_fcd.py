@@ -42,10 +42,13 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
     IP = 'localhost'
     PORT = 2321
     IMG_TX_TIMEOUT = 10
+    RESERVED_PERCENTAGE = 0
     VMDK_DRIVER = vmdk.VMwareVcVmdkDriver
     FCD_DRIVER = fcd.VMwareVStorageObjectDriver
+    VC_VERSION = "6.7.0"
 
     VOL_ID = 'abcdefab-cdef-abcd-efab-cdefabcdefab'
+    SRC_VOL_ID = '9b3f6f1b-03a9-4f1e-aaff-ae15122b6ccf'
     DISPLAY_NAME = 'foo'
     VOL_TYPE_ID = 'd61b8cb3-aa1b-4c9b-b79e-abcdbda8b58a'
     VOL_SIZE = 2
@@ -60,27 +63,57 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
         self._config.vmware_host_ip = self.IP
         self._config.vmware_host_port = self.PORT
         self._config.vmware_image_transfer_timeout_secs = self.IMG_TX_TIMEOUT
+        self._config.reserved_percentage = self.RESERVED_PERCENTAGE
         self._driver = fcd.VMwareVStorageObjectDriver(
             configuration=self._config)
+        self._driver._vc_version = self.VC_VERSION
+        self._driver._storage_policy_enabled = True
         self._context = context.get_admin_context()
 
     @mock.patch.object(VMDK_DRIVER, 'do_setup')
     @mock.patch.object(FCD_DRIVER, 'volumeops')
     def test_do_setup(self, vops, vmdk_do_setup):
+        self._driver._storage_policy_enabled = False
         self._driver.do_setup(self._context)
-        vmdk_do_setup.assert_called_once_with(self._context)
-        self.assertFalse(self._driver._storage_policy_enabled)
-        vops.set_vmx_version.assert_called_once_with('vmx-13')
 
-    def test_get_volume_stats(self):
+        vmdk_do_setup.assert_called_once_with(self._context)
+        vops.set_vmx_version.assert_called_once_with('vmx-13')
+        self.assertTrue(self._driver._use_fcd_snapshot)
+        self.assertTrue(self._driver._storage_policy_enabled)
+
+    @mock.patch.object(VMDK_DRIVER, 'volumeops')
+    @mock.patch.object(VMDK_DRIVER, '_get_datastore_summaries')
+    def test_get_volume_stats(self, _get_datastore_summaries, vops):
+        FREE_GB = 7
+        TOTAL_GB = 11
+
+        class ObjMock(object):
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        _get_datastore_summaries.return_value = \
+            ObjMock(objects= [
+                ObjMock(propSet = [
+                    ObjMock(name = "host",
+                            val = ObjMock(DatastoreHostMount = [])),
+                    ObjMock(name = "summary",
+                            val = ObjMock(freeSpace = FREE_GB * units.Gi,
+                                          capacity = TOTAL_GB * units.Gi,
+                                          accessible = True))
+                ])
+            ])
+
+        vops._in_maintenance.return_value = False
+
         stats = self._driver.get_volume_stats()
 
         self.assertEqual('VMware', stats['vendor_name'])
         self.assertEqual(self._driver.VERSION, stats['driver_version'])
         self.assertEqual(self._driver.STORAGE_TYPE, stats['storage_protocol'])
-        self.assertEqual(0, stats['reserved_percentage'])
-        self.assertEqual('unknown', stats['total_capacity_gb'])
-        self.assertEqual('unknown', stats['free_capacity_gb'])
+        self.assertEqual(self.RESERVED_PERCENTAGE,
+                         stats['reserved_percentage'])
+        self.assertEqual(TOTAL_GB, stats['total_capacity_gb'])
+        self.assertEqual(FREE_GB, stats['free_capacity_gb'])
 
     def _create_volume_dict(self,
                             vol_id=VOL_ID,
@@ -113,8 +146,12 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
             project_id)
         return fake_volume.fake_volume_obj(self._context, **vol)
 
+    @mock.patch.object(FCD_DRIVER, '_get_storage_profile')
     @mock.patch.object(FCD_DRIVER, '_select_datastore')
-    def test_select_ds_fcd(self, select_datastore):
+    def test_select_ds_fcd(self, select_datastore, get_storage_profile):
+        profile = mock.sentinel.profile
+        get_storage_profile.return_value = profile
+
         datastore = mock.sentinel.datastore
         summary = mock.Mock(datastore=datastore)
         select_datastore.return_value = (mock.ANY, mock.ANY, summary)
@@ -122,7 +159,8 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
         volume = self._create_volume_obj()
         ret = self._driver._select_ds_fcd(volume)
         self.assertEqual(datastore, ret)
-        exp_req = {hub.DatastoreSelector.SIZE_BYTES: volume.size * units.Gi}
+        exp_req = {hub.DatastoreSelector.SIZE_BYTES: volume.size * units.Gi,
+                   hub.DatastoreSelector.PROFILE_NAME: profile}
         select_datastore.assert_called_once_with(exp_req)
 
     @mock.patch.object(FCD_DRIVER, '_select_datastore')
@@ -173,13 +211,18 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
 
     @mock.patch.object(FCD_DRIVER, '_select_ds_fcd')
     @mock.patch.object(FCD_DRIVER, '_get_disk_type')
+    @mock.patch.object(FCD_DRIVER, '_get_storage_profile_id')
     @mock.patch.object(FCD_DRIVER, 'volumeops')
-    def test_create_volume(self, vops, get_disk_type, select_ds_fcd):
+    def test_create_volume(self, vops, get_storage_profile_id, get_disk_type,
+                           select_ds_fcd):
         ds_ref = mock.sentinel.ds_ref
         select_ds_fcd.return_value = ds_ref
 
         disk_type = mock.sentinel.disk_type
         get_disk_type.return_value = disk_type
+
+        profile_id = mock.sentinel.profile_id
+        get_storage_profile_id.return_value = profile_id
 
         fcd_loc = mock.Mock()
         provider_loc = mock.sentinel.provider_loc
@@ -192,7 +235,8 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
         select_ds_fcd.assert_called_once_with(volume)
         get_disk_type.assert_called_once_with(volume)
         vops.create_fcd.assert_called_once_with(
-            volume.name, volume.size * units.Ki, ds_ref, disk_type)
+            volume.name, volume.size * units.Ki, ds_ref, disk_type,
+            profile_id=profile_id)
 
     @mock.patch.object(volumeops.FcdLocation, 'from_provider_location')
     @mock.patch.object(FCD_DRIVER, 'volumeops')
@@ -272,10 +316,12 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
                        '_create_virtual_disk_from_preallocated_image')
     @mock.patch.object(FCD_DRIVER, 'volumeops')
     @mock.patch.object(datastore, 'DatastoreURL')
+    @mock.patch.object(FCD_DRIVER, '_get_storage_profile_id')
     @ddt.data(vmdk.ImageDiskType.PREALLOCATED, vmdk.ImageDiskType.SPARSE,
               vmdk.ImageDiskType.STREAM_OPTIMIZED)
     def test_copy_image_to_volume(self,
                                   disk_type,
+                                  get_storage_profile_id,
                                   datastore_url_cls,
                                   vops,
                                   create_disk_from_preallocated_image,
@@ -306,6 +352,9 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
         ds_url = mock.sentinel.ds_url
         datastore_url_cls.return_value = ds_url
 
+        profile_id = mock.sentinel.profile_id
+        get_storage_profile_id.return_value = profile_id
+
         fcd_loc = mock.Mock()
         provider_location = mock.sentinel.provider_location
         fcd_loc.provider_location.return_value = provider_location
@@ -334,6 +383,7 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
             str(ds_url),
             volume.name,
             summary.datastore)
+        vops.update_fcd_policy.assert_called_once_with(fcd_loc, profile_id)
 
     @mock.patch.object(volumeops.FcdLocation, 'from_provider_location')
     @mock.patch.object(FCD_DRIVER, 'volumeops')
@@ -423,35 +473,90 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
         self.assertEqual(dest_fcd_loc, ret)
         from_provider_loc.assert_called_once_with(provider_loc)
         vops.clone_fcd.assert_called_once_with(
-            name, fcd_loc, dest_ds_ref, disk_type)
+            name, fcd_loc, dest_ds_ref, disk_type, profile_id=None)
 
     @mock.patch.object(FCD_DRIVER, '_select_ds_fcd')
     @mock.patch.object(FCD_DRIVER, '_clone_fcd')
-    def test_create_snapshot(self, clone_fcd, select_ds_fcd):
-        ds_ref = mock.sentinel.ds_ref
-        select_ds_fcd.return_value = ds_ref
+    @mock.patch.object(FCD_DRIVER, 'volumeops')
+    @mock.patch.object(volumeops.FcdLocation, 'from_provider_location')
+    def _test_create_snapshot(
+            self, from_provider_loc, vops, clone_fcd, select_ds_fcd,
+            use_fcd_snapshot=False):
+        self._driver._use_fcd_snapshot = use_fcd_snapshot
 
-        dest_fcd_loc = mock.Mock()
         provider_location = mock.sentinel.provider_location
-        dest_fcd_loc.provider_location.return_value = provider_location
-        clone_fcd.return_value = dest_fcd_loc
+        if use_fcd_snapshot:
+            fcd_loc = mock.sentinel.fcd_loc
+            from_provider_loc.return_value = fcd_loc
+
+            fcd_snap_loc = mock.Mock()
+            fcd_snap_loc.provider_location.return_value = provider_location
+            vops.create_fcd_snapshot.return_value = fcd_snap_loc
+        else:
+            ds_ref = mock.sentinel.ds_ref
+            select_ds_fcd.return_value = ds_ref
+
+            dest_fcd_loc = mock.Mock()
+            dest_fcd_loc.provider_location.return_value = provider_location
+            clone_fcd.return_value = dest_fcd_loc
 
         volume = self._create_volume_obj()
         snapshot = fake_snapshot.fake_snapshot_obj(
             self._context, volume=volume)
         ret = self._driver.create_snapshot(snapshot)
         self.assertEqual({'provider_location': provider_location}, ret)
-        select_ds_fcd.assert_called_once_with(snapshot.volume)
-        clone_fcd.assert_called_once_with(
-            volume.provider_location, snapshot.name, ds_ref)
+
+        if use_fcd_snapshot:
+            vops.create_fcd_snapshot.assert_called_once_with(
+                fcd_loc, description="snapshot-%s" % snapshot.id)
+        else:
+            select_ds_fcd.assert_called_once_with(snapshot.volume)
+            clone_fcd.assert_called_once_with(
+                volume.provider_location, snapshot.name, ds_ref)
+
+    def test_create_snapshot_legacy(self):
+        self._test_create_snapshot()
+
+    def test_create_snapshot(self):
+        self._test_create_snapshot(use_fcd_snapshot=True)
 
     @mock.patch.object(FCD_DRIVER, '_delete_fcd')
-    def test_delete_snapshot(self, delete_fcd):
+    @mock.patch.object(volumeops.FcdSnapshotLocation, 'from_provider_location')
+    @mock.patch.object(FCD_DRIVER, 'volumeops')
+    def _test_delete_snapshot(
+            self, vops, from_provider_loc, delete_fcd,
+            empty_provider_loc=False, use_fcd_snapshot=False):
         volume = self._create_volume_obj()
         snapshot = fake_snapshot.fake_snapshot_obj(
             self._context, volume=volume)
+
+        if empty_provider_loc:
+            snapshot.provider_location = None
+        else:
+            snapshot.provider_location = "test"
+            if use_fcd_snapshot:
+                fcd_snap_loc = mock.sentinel.fcd_snap_loc
+                from_provider_loc.return_value = fcd_snap_loc
+            else:
+                from_provider_loc.return_value = None
+
         self._driver.delete_snapshot(snapshot)
-        delete_fcd.assert_called_once_with(snapshot.provider_location)
+        if empty_provider_loc:
+            delete_fcd.assert_not_called()
+            vops.delete_fcd_snapshot.assert_not_called()
+        elif use_fcd_snapshot:
+            vops.delete_fcd_snapshot.assert_called_once_with(fcd_snap_loc)
+        else:
+            delete_fcd.assert_called_once_with(snapshot.provider_location)
+
+    def test_delete_snapshot_legacy(self):
+        self._test_delete_snapshot()
+
+    def test_delete_snapshot_with_empty_provider_loc(self):
+        self._test_delete_snapshot(empty_provider_loc=True)
+
+    def test_delete_snapshot(self):
+        self._test_delete_snapshot(use_fcd_snapshot=True)
 
     @mock.patch.object(FCD_DRIVER, 'volumeops')
     @ddt.data((1, 1), (1, 2))
@@ -467,15 +572,20 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
 
     @mock.patch.object(FCD_DRIVER, '_select_ds_fcd')
     @mock.patch.object(FCD_DRIVER, '_get_disk_type')
+    @mock.patch.object(FCD_DRIVER, '_get_storage_profile_id')
     @mock.patch.object(FCD_DRIVER, '_clone_fcd')
     @mock.patch.object(FCD_DRIVER, '_extend_if_needed')
     def test_create_volume_from_fcd(
-            self, extend_if_needed, clone_fcd, get_disk_type, select_ds_fcd):
+            self, extend_if_needed, clone_fcd, get_storage_profile_id,
+            get_disk_type, select_ds_fcd):
         ds_ref = mock.sentinel.ds_ref
         select_ds_fcd.return_value = ds_ref
 
         disk_type = mock.sentinel.disk_type
         get_disk_type.return_value = disk_type
+
+        profile_id = mock.sentinel.profile_id
+        get_storage_profile_id.return_value = profile_id
 
         cloned_fcd_loc = mock.Mock()
         dest_provider_loc = mock.sentinel.dest_provider_loc
@@ -491,19 +601,54 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
         select_ds_fcd.test_assert_called_once_with(volume)
         get_disk_type.test_assert_called_once_with(volume)
         clone_fcd.assert_called_once_with(
-            provider_loc, volume.name, ds_ref, disk_type=disk_type)
+            provider_loc, volume.name, ds_ref, disk_type=disk_type,
+            profile_id=profile_id)
         extend_if_needed.assert_called_once_with(
             cloned_fcd_loc, cur_size, volume.size)
 
     @mock.patch.object(FCD_DRIVER, '_create_volume_from_fcd')
-    def test_create_volume_from_snapshot(self, create_volume_from_fcd):
-        src_volume = self._create_volume_obj()
+    @mock.patch.object(volumeops.FcdSnapshotLocation, 'from_provider_location')
+    @mock.patch.object(FCD_DRIVER, '_get_storage_profile_id')
+    @mock.patch.object(FCD_DRIVER, 'volumeops')
+    @mock.patch.object(FCD_DRIVER, '_extend_if_needed')
+    def _test_create_volume_from_snapshot(
+            self, extend_if_needed, vops, get_storage_profile_id,
+            from_provider_loc, create_volume_from_fcd, use_fcd_snapshot=False):
+        src_volume = self._create_volume_obj(vol_id=self.SRC_VOL_ID)
         snapshot = fake_snapshot.fake_snapshot_obj(
             self._context, volume=src_volume)
-        volume = mock.sentinel.volume
-        self._driver.create_volume_from_snapshot(volume, snapshot)
-        create_volume_from_fcd.assert_called_once_with(
-            snapshot.provider_location, snapshot.volume.size, volume)
+        volume = self._create_volume_obj(size=self.VOL_SIZE + 1)
+
+        if use_fcd_snapshot:
+            fcd_snap_loc = mock.sentinel.fcd_snap_loc
+            from_provider_loc.return_value = fcd_snap_loc
+
+            profile_id = mock.sentinel.profile_id
+            get_storage_profile_id.return_value = profile_id
+
+            fcd_loc = mock.Mock()
+            provider_loc = mock.sentinel.provider_loc
+            fcd_loc.provider_location.return_value = provider_loc
+            vops.create_fcd_from_snapshot.return_value = fcd_loc
+        else:
+            from_provider_loc.return_value = None
+
+        ret = self._driver.create_volume_from_snapshot(volume, snapshot)
+        if use_fcd_snapshot:
+            self.assertEqual({'provider_location': provider_loc}, ret)
+            vops.create_fcd_from_snapshot.assert_called_once_with(
+                fcd_snap_loc, volume.name, profile_id=profile_id)
+            extend_if_needed.assert_called_once_with(
+                fcd_loc, snapshot.volume_size, volume.size)
+        else:
+            create_volume_from_fcd.assert_called_once_with(
+                snapshot.provider_location, snapshot.volume.size, volume)
+
+    def test_create_volume_from_snapshot_legacy(self):
+        self._test_create_volume_from_snapshot()
+
+    def test_create_volume_from_snapshot(self):
+        self._test_create_volume_from_snapshot(use_fcd_snapshot=True)
 
     @mock.patch.object(FCD_DRIVER, '_create_volume_from_fcd')
     def test_create_cloned_volume(self, create_volume_from_fcd):
@@ -512,3 +657,64 @@ class VMwareVStorageObjectDriverTestCase(test.TestCase):
         self._driver.create_cloned_volume(volume, src_volume)
         create_volume_from_fcd.assert_called_once_with(
             src_volume.provider_location, src_volume.size, volume)
+
+    @mock.patch.object(FCD_DRIVER, '_get_storage_profile')
+    @mock.patch.object(FCD_DRIVER, '_get_extra_spec_storage_profile')
+    @mock.patch.object(FCD_DRIVER, '_in_use')
+    @mock.patch.object(FCD_DRIVER, 'volumeops')
+    @mock.patch.object(volumeops.FcdLocation, 'from_provider_location')
+    @mock.patch.object(FCD_DRIVER, 'ds_sel')
+    @ddt.data({},
+              {'storage_policy_enabled': False},
+              {'same_profile': True},
+              {'vol_in_use': True}
+              )
+    @ddt.unpack
+    def test_retype(
+            self, ds_sel, from_provider_location, vops, in_use,
+            get_extra_spec_storage_profile, get_storage_profile,
+            storage_policy_enabled=True, same_profile=False, vol_in_use=False):
+        self._driver._storage_policy_enabled = storage_policy_enabled
+
+        if storage_policy_enabled:
+            profile = mock.sentinel.profile
+            get_storage_profile.return_value = profile
+
+            if same_profile:
+                new_profile = profile
+            else:
+                new_profile = mock.sentinel.new_profile
+            get_extra_spec_storage_profile.return_value = new_profile
+
+            in_use.return_value = vol_in_use
+
+            if not vol_in_use:
+                fcd_loc = mock.sentinel.fcd_loc
+                from_provider_location.return_value = fcd_loc
+
+                new_profile_id = mock.Mock()
+                ds_sel.get_profile_id.return_value = new_profile_id
+
+        ctxt = mock.sentinel.ctxt
+        volume = self._create_volume_obj()
+        new_type = {'id': mock.sentinel.new_type_id}
+        diff = mock.sentinel.diff
+        host = mock.sentinel.host
+        ret = self._driver.retype(ctxt, volume, new_type, diff, host)
+
+        if not storage_policy_enabled:
+            self.assertTrue(ret)
+        else:
+            get_storage_profile.assert_called_once_with(volume)
+            get_extra_spec_storage_profile.assert_called_once_with(
+                new_type['id'])
+            if same_profile:
+                self.assertTrue(ret)
+            else:
+                in_use.assert_called_once_with(volume)
+                if vol_in_use:
+                    self.assertFalse(ret)
+                else:
+                    ds_sel.get_profile_id.assert_called_once_with(new_profile)
+                    vops.update_fcd_policy.assert_called_once_with(
+                        fcd_loc, new_profile_id.uniqueId)

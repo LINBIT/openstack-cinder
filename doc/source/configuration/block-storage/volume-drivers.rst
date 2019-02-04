@@ -37,7 +37,7 @@ Driver Configuration Reference
    drivers/dell-storagecenter-driver
    drivers/dell-emc-unity-driver
    drivers/dell-emc-vnx-driver
-   drivers/dell-emc-vmax-driver
+   drivers/dell-emc-powermax-driver
    drivers/dell-emc-vxflex-driver
    drivers/dell-emc-xtremio-driver
    drivers/drbd-driver
@@ -66,6 +66,7 @@ Driver Configuration Reference
    drivers/pure-storage-driver
    drivers/quobyte-driver
    drivers/solidfire-volume-driver
+   drivers/spdk-volume-driver
    drivers/storpool-volume-driver
    drivers/synology-dsm-driver
    drivers/tintri-volume-driver

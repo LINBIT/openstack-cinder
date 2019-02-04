@@ -271,6 +271,17 @@ limit_group_snapshot:
   required: false
   type: integer
   min_version: 3.29
+limit_transfer:
+  description: |
+    Requests a page size of items. Returns a number
+    of items up to a limit value. Use the ``limit`` parameter to make
+    an initial limited request and use the ID of the last-seen item
+    from the response as the ``marker`` parameter value in a
+    subsequent limited request.
+  in: query
+  required: false
+  type: integer
+  min_version: 3.59
 marker:
   description: |
     The ID of the last-seen item. Use the ``limit``
@@ -290,6 +301,16 @@ marker_group_snapshot:
   required: false
   type: string
   min_version: 3.29
+marker_transfer:
+  description: |
+    The ID of the last-seen item. Use the ``limit``
+    parameter to make an initial limited request and use the ID of the
+    last-seen item from the response as the ``marker`` parameter value
+    in a subsequent limited request.
+  in: query
+  required: false
+  type: string
+  min_version: 3.59
 metadata_query:
   description: |
     Filters results by a metadata key and value pair.
@@ -324,6 +345,14 @@ offset_group_snapshot:
   required: false
   type: integer
   min_version: 3.29
+offset_transfer:
+  description: |
+    Used in conjunction with ``limit`` to return a slice of items. ``offset``
+    is where to start in the list.
+  in: query
+  required: false
+  type: integer
+  min_version: 3.59
 resource:
   description: |
     Filter for resource name.
@@ -355,6 +384,15 @@ sort_dir_group_snapshot:
   required: false
   type: string
   min_version: 3.29
+sort_dir_transfer:
+  description: |
+    Sorts by one or more sets of attribute and sort
+    direction combinations. If you omit the sort direction in a set,
+    default is ``desc``.
+  in: query
+  required: false
+  type: string
+  min_version: 3.59
 sort_key:
   description: |
     Sorts by an attribute. A valid value is ``name``,
@@ -376,6 +414,15 @@ sort_key_group_snapshot:
   required: false
   type: string
   min_version: 3.29
+sort_key_transfer:
+  description: |
+    Sorts by an attribute. Default is
+    ``created_at``. The API uses the natural sorting direction of the
+    ``sort_key`` attribute value.
+  in: query
+  required: false
+  type: string
+  min_version: 3.59
 status_query:
   description: |
     Filters results by a status. Default=None.
@@ -410,6 +457,13 @@ absolute:
   in: body
   required: true
   type: object
+accepted:
+  description: |
+    Records if this transfer was accepted or not.
+  in: body
+  required: false
+  type: boolean
+  min_version: 3.57
 active_backend_id:
   description: |
     The ID of active storage backend. Only in ``cinder-volume`` service.
@@ -967,6 +1021,13 @@ description_volume_type_required:
   in: body
   required: true
   type: string
+destination_project_id:
+  description: |
+    Records the destination project_id after volume transfer.
+  in: body
+  required: false
+  type: string
+  min_version: 3.57
 detached_at:
   description: |
     The time when attachment is detached.
@@ -1141,6 +1202,12 @@ group_id:
     The ID of the group.
   in: body
   required: true
+  type: string
+group_id_optional:
+  description: |
+    The ID of the group.
+  in: body
+  required: false
   type: string
 group_name:
   description: |
@@ -2050,21 +2117,21 @@ os-vol-host-attr:host:
     Current back-end of the volume.
     Host format is ``host@backend#pool``.
   in: body
-  required: true
+  required: false
   type: string
 os-vol-mig-status-attr:migstat:
   description: |
     The status of this volume migration (None means
     that a migration is not currently in progress).
   in: body
-  required: true
+  required: false
   type: string
 os-vol-mig-status-attr:name_id:
   description: |
     The volume ID that this volume name on the back-
     end is based on.
   in: body
-  required: true
+  required: false
   type: string
 os-vol-tenant-attr:tenant_id:
   description: |
@@ -2128,6 +2195,13 @@ project_id:
   in: body
   required: true
   type: string
+project_id_group:
+  description: |
+    The UUID of the volume group project.
+  in: body
+  required: true
+  type: string
+  min_version: 3.58
 project_id_host:
   description: |
     The Project ID which the host resource belongs to.
@@ -2445,6 +2519,7 @@ service_uuid:
   in: body
   required: true
   type: string
+  min_version: 3.48
 services:
   description: |
     A list of service objects.
@@ -2458,6 +2533,7 @@ shared_targets:
   in: body
   required: true
   type: boolean
+  min_version: 3.48
 size:
   description: |
     The size of the volume, in gibibytes (GiB).
@@ -2563,6 +2639,13 @@ source_group_id_req:
   in: body
   required: true
   type: string
+source_project_id:
+  description: |
+    Records the source project_id before volume transfer.
+  in: body
+  required: false
+  type: string
+  min_version: 3.57
 source_reference:
   description: |
     The snapshot's origin volume information.
@@ -2941,10 +3024,10 @@ volume_type:
   type: object
 volume_type_access:
   description: |
-    The object contains volume type to be accessed by project.
+    List of objects containing volume type to be accessed by project.
   in: body
   required: true
-  type: object
+  type: array
 volume_type_detail:
   description: |
     The volume type (either name or ID). To create an environment with

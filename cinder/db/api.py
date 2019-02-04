@@ -320,9 +320,9 @@ def volume_get_all_by_project(context, project_id, marker, limit,
                                           offset=offset)
 
 
-def get_volume_summary(context, project_only):
+def get_volume_summary(context, project_only, filters=None):
     """Get volume summary."""
-    return IMPL.get_volume_summary(context, project_only)
+    return IMPL.get_volume_summary(context, project_only, filters)
 
 
 def volume_update(context, volume_id, values):
@@ -526,6 +526,11 @@ def snapshot_get_all_active_by_window(context, begin, end=None,
     """
     return IMPL.snapshot_get_all_active_by_window(context, begin, end,
                                                   project_id)
+
+
+def get_snapshot_summary(context, project_only, filters=None):
+    """Get snapshot summary."""
+    return IMPL.get_snapshot_summary(context, project_only, filters)
 
 
 ####################
@@ -1264,14 +1269,22 @@ def transfer_get(context, transfer_id):
     return IMPL.transfer_get(context, transfer_id)
 
 
-def transfer_get_all(context):
+def transfer_get_all(context, marker=None, limit=None, sort_keys=None,
+                     sort_dirs=None, filters=None, offset=None):
     """Get all volume transfer records."""
-    return IMPL.transfer_get_all(context)
+    return IMPL.transfer_get_all(context, marker=marker, limit=limit,
+                                 sort_keys=sort_keys, sort_dirs=sort_dirs,
+                                 filters=filters, offset=offset)
 
 
-def transfer_get_all_by_project(context, project_id):
+def transfer_get_all_by_project(context, project_id, marker=None,
+                                limit=None, sort_keys=None,
+                                sort_dirs=None, filters=None, offset=None):
     """Get all volume transfer records for specified project."""
-    return IMPL.transfer_get_all_by_project(context, project_id)
+    return IMPL.transfer_get_all_by_project(context, project_id, marker=marker,
+                                            limit=limit, sort_keys=sort_keys,
+                                            sort_dirs=sort_dirs,
+                                            filters=filters, offset=offset)
 
 
 def transfer_create(context, values):

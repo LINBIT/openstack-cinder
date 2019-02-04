@@ -2601,6 +2601,21 @@ class VolumeTestCase(base.BaseVolumeTestCase):
         self.volume.delete_volume(self.context, volume_dst)
         self.volume.delete_volume(self.context, volume_src)
 
+    def test_create_volume_from_sourcevol_fail_bad_size(self):
+        """Test cannot clone volume with bad volume size."""
+        volume_src = tests_utils.create_volume(self.context,
+                                               size=3,
+                                               status='available',
+                                               host=CONF.host)
+
+        self.assertRaises(exception.InvalidInput,
+                          self.volume_api.create,
+                          self.context,
+                          size=1,
+                          name='fake_name',
+                          description='fake_desc',
+                          source_volume=volume_src)
+
     @mock.patch('cinder.volume.api.API.list_availability_zones',
                 return_value=({'name': 'nova', 'available': True},
                               {'name': 'az2', 'available': True}))
@@ -3067,6 +3082,7 @@ class VolumeTestCase(base.BaseVolumeTestCase):
                           manager._append_volume_stats, {'pools': 'bad_data'})
 
     def test_default_tpool_size(self):
+        self.skipTest("Bug 1811663")
         """Test we can set custom tpool size."""
         eventlet.tpool._nthreads = 10
         self.assertListEqual([], eventlet.tpool._threads)
@@ -3077,6 +3093,7 @@ class VolumeTestCase(base.BaseVolumeTestCase):
         self.assertListEqual([], eventlet.tpool._threads)
 
     def test_tpool_size(self):
+        self.skipTest("Bug 1811663")
         """Test we can set custom tpool size."""
         self.assertNotEqual(100, eventlet.tpool._nthreads)
         self.assertListEqual([], eventlet.tpool._threads)

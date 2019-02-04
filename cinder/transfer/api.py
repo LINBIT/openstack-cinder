@@ -79,14 +79,24 @@ class API(base.Base):
         volume_utils.notify_about_volume_usage(context, volume_ref,
                                                "transfer.delete.end")
 
-    def get_all(self, context, filters=None):
+    def get_all(self, context, marker=None,
+                limit=None, sort_keys=None,
+                sort_dirs=None, filters=None, offset=None):
         filters = filters or {}
         context.authorize(policy.GET_ALL_POLICY)
         if context.is_admin and 'all_tenants' in filters:
-            transfers = self.db.transfer_get_all(context)
+            del filters['all_tenants']
+            transfers = self.db.transfer_get_all(context, marker=marker,
+                                                 limit=limit,
+                                                 sort_keys=sort_keys,
+                                                 sort_dirs=sort_dirs,
+                                                 filters=filters,
+                                                 offset=offset)
         else:
-            transfers = self.db.transfer_get_all_by_project(context,
-                                                            context.project_id)
+            transfers = self.db.transfer_get_all_by_project(
+                context, context.project_id, marker=marker,
+                limit=limit, sort_keys=sort_keys, sort_dirs=sort_dirs,
+                filters=filters, offset=offset)
         return transfers
 
     def _get_random_string(self, length):
@@ -150,7 +160,8 @@ class API(base.Base):
                         'salt': salt,
                         'crypt_hash': crypt_hash,
                         'expires_at': None,
-                        'no_snapshots': no_snapshots}
+                        'no_snapshots': no_snapshots,
+                        'source_project_id': volume_ref['project_id']}
 
         try:
             transfer = self.db.transfer_create(context, transfer_rec)
@@ -164,7 +175,10 @@ class API(base.Base):
                 'display_name': transfer['display_name'],
                 'auth_key': auth_key,
                 'created_at': transfer['created_at'],
-                'no_snapshots': transfer['no_snapshots']}
+                'no_snapshots': transfer['no_snapshots'],
+                'source_project_id': transfer['source_project_id'],
+                'destination_project_id': transfer['destination_project_id'],
+                'accepted': transfer['accepted']}
 
     def _handle_snapshot_quota(self, context, snapshots, volume_type_id,
                                donor_id):
