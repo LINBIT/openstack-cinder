@@ -115,6 +115,8 @@ RESOURCE_LIST_RESP = ['node_two', 'node_one']
 
 SNAPSHOT_LIST_RESP = ['node_two']
 
+DISKLESS_LIST_RESP = ['node_two']
+
 RESOURCE_DFN_LIST = {
     'rscDfns': [
         {
@@ -554,10 +556,25 @@ class LinstorBaseDriverTestCase(test.TestCase):
         expected = u'bd6472d1-dc3c-4d41-a5f0-f44271c05680'
         self.assertEqual(expected, val)
 
+    @mock.patch('uuid.uuid4')
+    def test_clean_uuid_with_braces(self, m_uuid):
+        m_uuid.return_value = u'{bd6472d1-dc3c-4d41-a5f0-f44271c05680}'
+
+        val = self.driver._clean_uuid()
+        expected = u'bd6472d1-dc3c-4d41-a5f0-f44271c05680'
+
+        m_uuid.assert_called_once()
+        self.assertEqual(expected, val)
+
     # Test volume size conversions
-    def test_unit_conversions_to_linstor(self):
+    def test_unit_conversions_to_linstor_1GiB(self):
         val = self.driver._vol_size_to_linstor(1)
         expected = 1044480   # 1048575 - 4096
+        self.assertEqual(expected, val)
+
+    def test_unit_conversions_to_linstor_2GiB(self):
+        val = self.driver._vol_size_to_linstor(2)
+        expected = 2093056   # 2097152 - 4096
         self.assertEqual(expected, val)
 
     def test_unit_conversions_to_cinder(self):
@@ -565,10 +582,22 @@ class LinstorBaseDriverTestCase(test.TestCase):
         expected = 1
         self.assertEqual(expected, val)
 
+    def test_unit_conversions_to_cinder_2GiB(self):
+        val = self.driver._vol_size_to_cinder(2097152)
+        expected = 2
+        self.assertEqual(expected, val)
+
     def test_is_clean_volume_name(self):
         val = self.driver._is_clean_volume_name(VOLUME_NAMES['cinder'],
                                                 drv.DM_VN_PREFIX)
         expected = VOLUME_NAMES['linstor']
+        self.assertEqual(expected, val)
+
+    def test_is_clean_volume_name_invalid(self):
+        wrong_uuid = 'bc3015e6-695f-4688-91f2-invaliduuid1'
+        val = self.driver._is_clean_volume_name(wrong_uuid,
+                                                drv.DM_VN_PREFIX)
+        expected = None
         self.assertEqual(expected, val)
 
     def test_snapshot_name_from_cinder_snapshot(self):
@@ -601,6 +630,8 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_rsc_path(VOLUME_NAMES['linstor'])
         expected = '/dev/drbd1000'
+
+        m_rsc_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
@@ -609,6 +640,8 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_local_path(CINDER_VOLUME)
         expected = '/dev/drbd1000'
+
+        m_rsc_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_storage_pool_dfn_list')
@@ -618,6 +651,8 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_spd()
         expected = STORAGE_POOL_DEF_RESP
+
+        m_spd_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_storage_pool_list')
@@ -627,6 +662,8 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_storage_pool()
         expected = STORAGE_POOL_LIST_RESP
+
+        m_sp_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_dfn_list')
@@ -636,6 +673,8 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_resource_definitions()
         expected = RESOURCE_DFN_LIST_RESP
+
+        m_rscd_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_snapshot_nodes')
@@ -644,6 +683,18 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_snapshot_nodes(VOLUME_NAMES['linstor'])
         expected = SNAPSHOT_LIST_RESP
+
+        m_rsc_list.assert_called_once()
+        self.assertEqual(expected, val)
+
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
+    def test_get_diskless_nodes(self, m_rsc_list):
+        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
+
+        val = self.driver._get_diskless_nodes(RESOURCE['name'])
+        expected = DISKLESS_LIST_RESP
+
+        m_rsc_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_nodes_list')
@@ -652,6 +703,8 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_linstor_nodes()
         expected = RESOURCE_LIST_RESP
+
+        m_node_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_nodes_list')
@@ -660,6 +713,8 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_nodes()
         expected = NODES_RESP
+
+        m_node_list.assert_called_once()
         self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver.get_goodness_function')
@@ -680,70 +735,62 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver._get_volume_stats()
         expected = VOLUME_STATS_RESP
+
+        m_sp_list.assert_called_once()
+        m_rscd_list.assert_called_once()
         self.assertEqual(expected, val)
 
-    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
-    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
     @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_create')
     def test_create_snapshot_fail(self,
-                                  m_snap_create,
-                                  m_api_reply,
-                                  m_rsc_list):
-        m_snap_create.return_value = None
-        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
-        m_api_reply.return_value = False
+                                  m_snap_create):
+        m_snap_create.return_value = False
 
         self.assertRaises(cinder_exception.VolumeBackendAPIException,
                           self.driver.create_snapshot, SNAPSHOT)
 
-    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
-    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
     @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_create')
     def test_create_snapshot_success(self,
-                                     m_snap_create,
-                                     m_api_reply,
-                                     m_rsc_list):
-        m_snap_create.return_value = None
-        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
-        m_api_reply.return_value = True
+                                     m_snap_create):
+        m_snap_create.return_value = True
 
         # No exception should be raised
         self.assertIsNone(self.driver.create_snapshot(SNAPSHOT))
 
-    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_dfn_list')
-    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
-    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
     @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_delete')
     def test_delete_snapshot_fail(self,
-                                  m_snap_delete,
-                                  m_api_reply,
-                                  m_rsc_list,
-                                  m_rsc_dfn_list):
-        m_snap_delete.return_value = None
-        m_api_reply.return_value = False
-        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
-        m_rsc_dfn_list.return_value = (
-            self._fake_driver.fake_api_resource_dfn_list())
+                                  m_snap_delete):
+        m_snap_delete.return_value = False
 
         self.assertRaises(cinder_exception.VolumeBackendAPIException,
                           self.driver.delete_snapshot, SNAPSHOT)
 
-    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_delete')
-    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
-    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_snapshot_nodes')
     @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_delete')
     def test_delete_snapshot_success(self,
                                      m_snap_delete,
-                                     m_api_reply,
-                                     m_rsc_list,
-                                     m_rsc_dfn_delete):
-        m_snap_delete.return_value = None
-        m_api_reply.return_value = True
-        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
-        m_rsc_dfn_delete.return_value = True
+                                     m_snap_nodes):
+        m_snap_delete.return_value = True
+        m_snap_nodes.return_value = self._fake_driver.fake_api_snapshot_list()
 
         # No exception should be raised
         self.driver.delete_snapshot(SNAPSHOT)
+
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_snapshot_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_delete')
+    def test_delete_snapshot_success_cleanup_rd(self,
+                                                m_snap_delete,
+                                                m_snap_nodes,
+                                                m_rd_delete):
+        m_snap_delete.return_value = True
+        m_snap_nodes.return_value = []
+        m_rd_delete.return_value = None
+
+        # No exception should be raised
+        self.driver.delete_snapshot(SNAPSHOT)
+
+        # Resource Definition Delete should run once
+        m_rd_delete.assert_called_once()
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_storage_pool_list')
     @mock.patch(DRIVER + 'LinstorBaseDriver._api_volume_dfn_set_sp')
@@ -768,8 +815,6 @@ class LinstorBaseDriverTestCase(test.TestCase):
         m_api_reply.return_value = True
         m_snap_vd_restore.return_value = True
         m_nodes = []
-        m_nodes.append('for test')
-        m_nodes.remove('for test')
         m_lin_nodes.return_value = m_nodes
         m_snap_rsc_restore.return_value = True
         m_rsc_create.return_value = True
@@ -778,8 +823,87 @@ class LinstorBaseDriverTestCase(test.TestCase):
         m_sp_list.return_value = (
             self._fake_driver.fake_api_storage_pool_list())
 
+        # No exception should be raised
         self.assertIsNone(self.driver.create_volume_from_snapshot(
             CINDER_VOLUME, SNAPSHOT))
+
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_storage_pool_list')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_volume_dfn_set_sp')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_volume_extend')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_create')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_resource_restore')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_linstor_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_volume_dfn_restore')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_create')
+    def test_create_volume_from_snapshot_fail_restore(self,
+                                                      m_rsc_dfn_create,
+                                                      m_api_reply,
+                                                      m_snap_vd_restore,
+                                                      m_lin_nodes,
+                                                      m_snap_rsc_restore,
+                                                      m_rsc_create,
+                                                      m_vol_extend,
+                                                      m_vol_dfn,
+                                                      m_sp_list):
+        m_rsc_dfn_create.return_value = True
+        m_api_reply.return_value = True
+        m_snap_vd_restore.return_value = True
+        m_nodes = []
+        m_lin_nodes.return_value = m_nodes
+        m_snap_rsc_restore.return_value = False
+        m_rsc_create.return_value = True
+        m_vol_extend.return_value = True
+        m_vol_dfn.return_value = True
+        m_sp_list.return_value = (
+            self._fake_driver.fake_api_storage_pool_list())
+
+        # Failing to restore a snapshot should raise an exception
+        self.assertRaises(cinder_exception.VolumeBackendAPIException,
+                          self.driver.create_volume_from_snapshot,
+                          CINDER_VOLUME, SNAPSHOT)
+
+    @mock.patch(DRIVER + 'LinstorBaseDriver.delete_volume')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_storage_pool_list')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_volume_dfn_set_sp')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_volume_extend')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_create')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_resource_restore')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_linstor_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_snapshot_volume_dfn_restore')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_create')
+    def test_create_volume_from_snapshot_fail_extend(self,
+                                                     m_rsc_dfn_create,
+                                                     m_api_reply,
+                                                     m_snap_vd_restore,
+                                                     m_lin_nodes,
+                                                     m_snap_rsc_restore,
+                                                     m_rsc_create,
+                                                     m_vol_extend,
+                                                     m_vol_dfn,
+                                                     m_sp_list,
+                                                     m_delete_volume):
+        m_rsc_dfn_create.return_value = True
+        m_api_reply.return_value = False
+        m_snap_vd_restore.return_value = True
+        m_nodes = []
+        m_lin_nodes.return_value = m_nodes
+        m_snap_rsc_restore.return_value = True
+        m_rsc_create.return_value = True
+        m_vol_extend.return_value = True
+        m_vol_dfn.return_value = True
+        m_sp_list.return_value = (
+            self._fake_driver.fake_api_storage_pool_list())
+        m_delete_volume.return_value = True
+
+        # Failing to extend the volume after a snapshot restoration should
+        # raise an exception
+        new_volume = CINDER_VOLUME
+        new_volume['size'] = 2
+        self.assertRaises(cinder_exception.VolumeBackendAPIException,
+                          self.driver.create_volume_from_snapshot,
+                          new_volume, SNAPSHOT)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
     @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_create')
@@ -893,7 +1017,7 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver.create_volume(test_volume)
         expected = {}
-        self.assertEqual(val, expected)
+        self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
     @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_delete')
@@ -917,6 +1041,99 @@ class LinstorBaseDriverTestCase(test.TestCase):
         test_volume['host'] = 'node_one'
         test_volume['size'] = 1
 
+        self.assertRaises(cinder_exception.VolumeBackendAPIException,
+                          self.driver.delete_volume, test_volume)
+
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_diskless_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_volume_dfn_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
+    def test_delete_volume_fail_diskless_remove(self,
+                                                m_rsc_list,
+                                                m_rsc_delete,
+                                                m_vol_dfn_delete,
+                                                m_rsc_dfn_delete,
+                                                m_api_reply,
+                                                m_diskless):
+        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
+        m_rsc_delete.return_value = False
+        m_vol_dfn_delete.return_value = True
+        m_rsc_dfn_delete.return_value = True
+        m_api_reply.return_value = False
+        m_diskless.return_value = ['foo']
+
+        test_volume = CINDER_VOLUME
+        test_volume['display_name'] = 'linstor_test'
+        test_volume['host'] = 'node_one'
+        test_volume['size'] = 1
+
+        # Raises exception for failing to delete a diskless resource
+        self.assertRaises(cinder_exception.VolumeBackendAPIException,
+                          self.driver.delete_volume, test_volume)
+
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_snapshot_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_diskless_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_volume_dfn_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
+    def test_delete_volume_fail_diskful_remove(self,
+                                               m_rsc_list,
+                                               m_rsc_delete,
+                                               m_vol_dfn_delete,
+                                               m_rsc_dfn_delete,
+                                               m_api_reply,
+                                               m_diskless,
+                                               m_snap_nodes):
+        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
+        m_rsc_delete.return_value = False
+        m_vol_dfn_delete.return_value = True
+        m_rsc_dfn_delete.return_value = True
+        m_api_reply.return_value = False
+        m_diskless.return_value = []
+        m_snap_nodes.return_value = ['foo']
+
+        test_volume = CINDER_VOLUME
+        test_volume['display_name'] = 'linstor_test'
+        test_volume['host'] = 'node_one'
+        test_volume['size'] = 1
+
+        # Raises exception for failing to delete a diskful resource
+        self.assertRaises(cinder_exception.VolumeBackendAPIException,
+                          self.driver.delete_volume, test_volume)
+
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_snapshot_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_diskless_nodes')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_dfn_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_volume_dfn_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._api_rsc_delete')
+    @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_resource_list')
+    def test_delete_volume_fail_volume_definition(self,
+                                                  m_rsc_list,
+                                                  m_rsc_delete,
+                                                  m_vol_dfn_delete,
+                                                  m_rsc_dfn_delete,
+                                                  m_api_reply,
+                                                  m_diskless,
+                                                  m_snap_nodes):
+        m_rsc_list.return_value = self._fake_driver.fake_api_resource_list()
+        m_rsc_delete.return_value = True
+        m_vol_dfn_delete.return_value = False
+        m_rsc_dfn_delete.return_value = True
+        m_api_reply.return_value = False
+        m_diskless.return_value = []
+        m_snap_nodes.return_value = []
+
+        test_volume = CINDER_VOLUME
+        test_volume['display_name'] = 'linstor_test'
+        test_volume['host'] = 'node_one'
+        test_volume['size'] = 1
+
+        # Raises exception for failing to delete a volume definition
         self.assertRaises(cinder_exception.VolumeBackendAPIException,
                           self.driver.delete_volume, test_volume)
 
@@ -944,7 +1161,7 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver.delete_volume(test_volume)
         expected = True
-        self.assertEqual(val, expected)
+        self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorBaseDriver._check_api_reply')
     @mock.patch(DRIVER + 'LinstorBaseDriver._get_api_volume_extend')
@@ -973,7 +1190,7 @@ class LinstorBaseDriverTestCase(test.TestCase):
 
         val = self.driver.migrate_volume(m_ctxt, m_volume, m_host)
         expected = (False, None)
-        self.assertEqual(val, expected)
+        self.assertEqual(expected, val)
 
 
 class LinstorIscsiDriverTestCase(test.TestCase):
@@ -1013,7 +1230,7 @@ class LinstorIscsiDriverTestCase(test.TestCase):
 
         expected = VOLUME_STATS_RESP
         expected["storage_protocol"] = 'iSCSI'
-        self.assertEqual(val, expected)
+        self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'proto')
     @mock.patch(DRIVER + 'linstor')
@@ -1064,7 +1281,7 @@ class LinstorDrbdDriverTestCase(test.TestCase):
                 "device_path": str(m_rsc_path.return_value)
             }
         }
-        self.assertEqual(val, expected)
+        self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorDrbdDriver._get_api_storage_pool_list')
     def test_drbd_node_in_sp(self, m_sp_list):
@@ -1081,7 +1298,7 @@ class LinstorDrbdDriverTestCase(test.TestCase):
         val = self.driver.get_volume_stats()
         expected = VOLUME_STATS_RESP
         expected["storage_protocol"] = 'DRBD'
-        self.assertEqual(val, expected)
+        self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'proto')
     @mock.patch(DRIVER + 'linstor')
@@ -1117,7 +1334,7 @@ class LinstorDrbdDriverTestCase(test.TestCase):
                 "device_path": str(m_rsc_path.return_value)
             }
         }
-        self.assertEqual(val, expected)
+        self.assertEqual(expected, val)
 
     @mock.patch(DRIVER + 'LinstorDrbdDriver._check_api_reply')
     @mock.patch(DRIVER + 'LinstorDrbdDriver._api_rsc_delete')
