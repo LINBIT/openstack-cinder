@@ -23,8 +23,9 @@ from oslo_utils import units
 import requests
 import requests.auth
 import requests.exceptions as r_exc
-import requests.packages.urllib3.exceptions as urllib_exp
+# pylint: disable=E0401
 import requests.packages.urllib3.util.retry as requests_retry
+
 import six
 
 from cinder import coordination
@@ -33,13 +34,11 @@ from cinder.i18n import _
 from cinder.utils import retry
 from cinder.volume.drivers.dell_emc.powermax import utils
 
-requests.packages.urllib3.disable_warnings(urllib_exp.InsecureRequestWarning)
-
 LOG = logging.getLogger(__name__)
 SLOPROVISIONING = 'sloprovisioning'
 REPLICATION = 'replication'
 SYSTEM = 'system'
-U4V_VERSION = '84'
+U4V_VERSION = '90'
 UCODE_5978 = '5978'
 retry_exc_tuple = (exception.VolumeBackendAPIException,)
 # HTTP constants
@@ -732,10 +731,10 @@ class PowerMaxRest(object):
         :param extra_specs: the extra specifications
         """
         payload = {"editStorageGroupActionParam": {
-            "addExistingStorageGroupParam": {
-                "storageGroupId": [child_sg]}}}
-        sc, job = self.modify_storage_group(array, parent_sg, payload,
-                                            version="83")
+            "expandStorageGroupParam": {
+                "addExistingStorageGroupParam": {
+                    "storageGroupId": [child_sg]}}}}
+        sc, job = self.modify_storage_group(array, parent_sg, payload)
         self.wait_for_job('Add child sg to parent sg', sc, job, extra_specs)
 
     def remove_child_sg_from_parent_sg(
@@ -896,9 +895,9 @@ class PowerMaxRest(object):
         if vol_details:
             vol_identifier = vol_details.get('volume_identifier', None)
             LOG.debug('Element name = %(en)s, Vol identifier = %(vi)s, '
-                      'Device id = %(di)s, vol details = %(vd)s',
+                      'Device id = %(di)s',
                       {'en': element_name, 'vi': vol_identifier,
-                       'di': device_id, 'vd': vol_details})
+                       'di': device_id})
             if vol_identifier == element_name:
                 found_device_id = device_id
             elif name_id:
@@ -1409,7 +1408,7 @@ class PowerMaxRest(object):
 
         resource_name = ('%(directorId)s/port/%(port_number)s'
                          % {'directorId': dir_id, 'port_number': port_no})
-        return self.get_resource(array, SLOPROVISIONING, 'director',
+        return self.get_resource(array, SYSTEM, 'director',
                                  resource_name=resource_name)
 
     def get_iscsi_ip_address_and_iqn(self, array, port_id):
@@ -1476,9 +1475,8 @@ class PowerMaxRest(object):
         :param params: dict of optional params
         :returns: list of initiators
         """
-        version = '90' if self.is_next_gen_array(array) else U4V_VERSION
         init_dict = self.get_resource(array, SLOPROVISIONING, 'initiator',
-                                      params=params, version=version)
+                                      params=params)
         try:
             init_list = init_dict['initiatorId']
         except (KeyError, TypeError):
@@ -1846,9 +1844,9 @@ class PowerMaxRest(object):
         snapshot = None
         snap_info = self.get_volume_snap_info(array, device_id)
         if snap_info:
-            if (snap_info.get('snapshotSrcs') and
-                    bool(snap_info['snapshotSrcs'])):
-                for snap in snap_info['snapshotSrcs']:
+            if (snap_info.get('snapshotSrc') and
+                    bool(snap_info['snapshotSrc'])):
+                for snap in snap_info['snapshotSrc']:
                     if snap['snapshotName'] == snap_name:
                         if snap['generation'] == generation:
                             snapshot = snap
@@ -1865,8 +1863,8 @@ class PowerMaxRest(object):
         snapshot_list = []
         snap_info = self.get_volume_snap_info(array, source_device_id)
         if snap_info:
-            if bool(snap_info['snapshotSrcs']):
-                snapshot_list = snap_info['snapshotSrcs']
+            if bool(snap_info['snapshotSrc']):
+                snapshot_list = snap_info['snapshotSrc']
         return snapshot_list
 
     def is_vol_in_rep_session(self, array, device_id):
@@ -1985,11 +1983,14 @@ class PowerMaxRest(object):
         snap_dict_list = []
         snapshots = self.get_volume_snapshot_list(array, source_device_id)
         for snapshot in snapshots:
-            if bool(snapshot['linkedDevices']):
-                link_info = {'linked_vols': snapshot['linkedDevices'],
-                             'snap_name': snapshot['snapshotName'],
-                             'generation': snapshot['generation']}
-                snap_dict_list.append(link_info)
+            try:
+                if bool(snapshot['linkedDevices']):
+                    link_info = {'linked_vols': snapshot['linkedDevices'],
+                                 'snap_name': snapshot['snapshotName'],
+                                 'generation': snapshot['generation']}
+                    snap_dict_list.append(link_info)
+            except KeyError:
+                pass
         return snap_dict_list
 
     def get_snap_linked_device_list(self, array, source_device_id,

@@ -3,7 +3,6 @@
 
 [Filters]
 # cinder/volume/iscsi.py: iscsi_helper '--op' ...
-tgtadm: CommandFilter, tgtadm, root
 iscsictl: CommandFilter, iscsictl, root
 cinder-rtstool: CommandFilter, cinder-rtstool, root
 
@@ -41,14 +40,6 @@ privsep-rootwrap: RegExpFilter, privsep-helper, root, privsep-helper, --config-f
 # Privsep calls within cinder iteself
 privsep-rootwrap-sys_admin: RegExpFilter, privsep-helper, root, privsep-helper, --config-file, /etc/(?!\.\.).*, --privsep_context, cinder.privsep.sys_admin_pctxt, --privsep_sock_path, /tmp/.*
 
-# The following and any cinder/brick/* entries should all be obsoleted
-# by privsep, and may be removed once the os-brick version requirement
-# is updated appropriately.
-drbdadm: CommandFilter, drbdadm, root
-
-# cinder/brick/local_dev/lvm.py: 'vgcreate', vg_name, pv_list
-vgcreate: CommandFilter, vgcreate, root
-
 # cinder/brick/local_dev/lvm.py: 'lvcreate', '-L', sizestr, '-n', volume_name,..
 # cinder/brick/local_dev/lvm.py: 'lvcreate', '-L', ...
 lvcreate: EnvFilter, env, root, LC_ALL=C, lvcreate
@@ -61,9 +52,6 @@ dd: CommandFilter, dd, root
 
 # cinder/volume/driver.py: 'lvremove', '-f', %s/%s % ...
 lvremove: CommandFilter, lvremove, root
-
-# cinder/volume/driver.py: 'lvrename', '%(vg)s', '%(orig)s' '(new)s'...
-lvrename: CommandFilter, lvrename, root
 
 # cinder/brick/local_dev/lvm.py: 'lvextend', '-L' '%(new_size)s', '%(lv_name)s' ...
 # cinder/brick/local_dev/lvm.py: 'lvextend', '-L' '%(new_size)s', '%(thin_pool)s' ...
@@ -139,8 +127,6 @@ mmlsfileset: CommandFilter, mmlsfileset, root
 mmlinkfileset: CommandFilter, mmlinkfileset, root
 mmunlinkfileset: CommandFilter, mmunlinkfileset, root
 mmdelfileset: CommandFilter, mmdelfileset, root
-mmcrsnapshot: CommandFilter, mmcrsnapshot, root
-mmdelsnapshot: CommandFilter, mmdelsnapshot, root
 
 # cinder/volume/drivers/ibm/gpfs.py
 # cinder/volume/drivers/ibm/ibmnas.py

@@ -1090,7 +1090,7 @@ class VolumeManager(manager.CleanableManager,
                 if not s_res:
                     msg_args = {"id": snapshot.id,
                                 "status":
-                                    fields.SnapshotStatus.ERROR}
+                                    fields.SnapshotStatus.AVAILABLE}
                     msg += ("Failed to reset snapshot %(id)s "
                             "status to %(status)s." % msg_args)
                 LOG.exception(msg, msg_args)
@@ -2782,7 +2782,9 @@ class VolumeManager(manager.CleanableManager,
                 if new_reservations:
                     QUOTAS.rollback(context, new_reservations)
 
-        status_update = {'status': volume.previous_status}
+        previous_status = (
+            volume.previous_status or volume.status)
+        status_update = {'status': previous_status}
         if context.project_id != volume.project_id:
             project_id = volume.project_id
         else:
@@ -4023,6 +4025,8 @@ class VolumeManager(manager.CleanableManager,
             # Get reservations
             try:
                 reserve_opts = {'snapshots': -1}
+                if not CONF.no_snapshot_gb_quota:
+                    reserve_opts['gigabytes'] = -snapshot.volume_size
                 volume_ref = objects.Volume.get_by_id(context,
                                                       snapshot.volume_id)
                 QUOTAS.add_volume_type_opts(context,

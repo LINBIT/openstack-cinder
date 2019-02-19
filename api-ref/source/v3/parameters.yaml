@@ -1493,8 +1493,7 @@ key_size:
   type: integer
 keys:
   description: |
-    List of Keys. For example, CryptsetupEncryptor, LuksEncryptor or
-    NoOpEncryptor.
+    List of Keys.
   in: body
   required: true
   type: array
@@ -2785,6 +2784,12 @@ totalGigabytesUsed:
   in: body
   required: true
   type: integer
+totalGigabytesUsedStr:
+  description: |
+    The total number of gibibytes (GiB) used.
+  in: body
+  required: true
+  type: string
 totalSnapGigabytesUsed:
   description: |
     The total number of gibibytes (GiB) used by snapshots.

@@ -147,8 +147,7 @@ class LVM(executor.Executor):
         return exists
 
     def _create_vg(self, pv_list):
-        cmd = ['vgcreate', self.vg_name, ','.join(pv_list)]
-        self._execute(*cmd, root_helper=self._root_helper, run_as_root=True)
+        cinder.privsep.lvm.create_volume(self.vg_name, pv_list)
 
     def _get_thin_pool_free_space(self, vg_name, thin_pool_name):
         """Returns available thin pool free space.
@@ -860,9 +859,7 @@ class LVM(executor.Executor):
         """Change the name of an existing volume."""
 
         try:
-            self._execute('lvrename', self.vg_name, lv_name, new_name,
-                          root_helper=self._root_helper,
-                          run_as_root=True)
+            cinder.privsep.lvm.lvrename(self.vg_name, lv_name, new_name)
         except putils.ProcessExecutionError as err:
             LOG.exception('Error renaming logical volume')
             LOG.error('Cmd     :%s', err.cmd)

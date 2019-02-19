@@ -109,6 +109,8 @@ class PowerMaxISCSIDriver(san.SanISCSIDriver):
               - Support for failover to secondary Unisphere
                 (bp/vmax-unisphere-failover)
               - Rebrand from VMAX to PowerMax(bp/vmax-powermax-rebrand)
+              - Change from 84 to 90 REST endpoints (bug #1808539)
+              - Fix for PowerMax OS replication settings (bug #1812685)
     """
 
     VERSION = "4.0.0"
