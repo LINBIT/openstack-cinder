@@ -1,4 +1,4 @@
-#  Copyright (c) 2014-2018 LINBIT HA Solutions GmbH
+#  Copyright (c) 2014-2019 LINBIT HA Solutions GmbH
 #  All Rights Reserved.
 #
 #  Licensed under the Apache License, Version 2.0 (the "License"); you may
@@ -71,6 +71,13 @@ linstor_opts = [
                     'When using iSCSI transport, this option '
                     'specifies the block size.'),
 
+    cfg.IntOpt('linstor_autoplace_count',
+               default=0,
+               help='Autoplace replication count on volume deployment. '
+                    '0 = Full cluster replication without autoplace, '
+                    '1 = Single node deployment without replication, '
+                    '2 or greater = Replicated deployment with autoplace.'),
+
     cfg.BoolOpt('linstor_controller_diskless',
                 default=True,
                 help='True means Cinder node is a diskless LINSTOR node.')
@@ -113,6 +120,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
             'linstor_default_blocksize')
         self.diskless = self.configuration.safe_get(
             'linstor_controller_diskless')
+        self.ap_count = self.configuration.safe_get(
+            'linstor_autoplace_count')
         self.default_backend_name = self.configuration.safe_get(
             'volume_backend_name')
         self.host_name = socket.gethostname()
@@ -306,6 +315,16 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                            diskless=diskless)
 
             rsc_reply = lin.resource_create([new_rsc], async_msg=False)
+            return rsc_reply
+
+    def _api_rsc_autoplace(self, rsc_name):
+        with lin_drv(self.default_uri) as lin:
+            if not lin.connected:
+                lin.connect()
+
+            new_rsc = linstor.Resource(rsc_name, self.default_uri)
+            new_rsc.placement.redundancy = self.ap_count
+            rsc_reply = new_rsc.autoplace()
             return rsc_reply
 
     def _api_rsc_delete(self, rsc_name, node_name):
@@ -663,19 +682,21 @@ class LinstorBaseDriver(driver.VolumeDriver):
         src_snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
         new_vol_name = self._drbd_resource_name_from_cinder_volume(volume)
 
-        diskless_nodes = []
-        nodes = []
-        for node in self._get_storage_pool():
+        # If no autoplace, manually build a cluster list
+        if self.ap_count == 0:
+            diskless_nodes = []
+            nodes = []
+            for node in self._get_storage_pool():
 
-            if 'Diskless' in node['driver_name']:
-                diskless_nodes.append(node['node_name'])
-                continue
+                if 'Diskless' in node['driver_name']:
+                    diskless_nodes.append(node['node_name'])
+                    continue
 
-            # Filter out controller node if it is diskless
-            if self.diskless and node['node_name'] == self.host_name:
-                continue
-            else:
-                nodes.append(node['node_name'])
+                # Filter out controller node if it is diskless
+                if self.diskless and node['node_name'] == self.host_name:
+                    continue
+                else:
+                    nodes.append(node['node_name'])
 
         reply = self._api_snapshot_resource_restore(src_rsc_name,
                                                     src_snap_name,
@@ -691,8 +712,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                          node_name=self.host_name,
                                          diskless=self.diskless)
 
-        # Add any other diskless nodes if any
-        if diskless_nodes:
+        # Add any other diskless nodes only if not autoplaced
+        if self.ap_count == 0 and diskless_nodes:
             for node in diskless_nodes:
                 self._api_rsc_create(rsc_name=new_vol_name,
                                      node_name=node,
@@ -793,25 +814,37 @@ class LinstorBaseDriver(driver.VolumeDriver):
         # Create LINSTOR Resources
         ctrl_in_sp = False
         for node in sp_data:
-
             # Check if controller is in the pool
             if node['node_name'] == self.host_name:
                 ctrl_in_sp = True
 
-            # Deploy resource on each node
-            if 'Diskless' in node['driver_name']:
-                diskless = True
-            else:
-                diskless = False
+        # Use autoplace if autoplace count is set
+        if self.ap_count:
+            rsc_reply = self._api_rsc_autoplace(rsc_name=rsc_name)
 
-            rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
-                                             node_name=node['node_name'],
-                                             diskless=diskless)
-
-            if not self._check_api_reply(rsc_reply, noerror_only=True):
+            if rsc_reply:
                 msg = _("Error creating a LINSTOR resource")
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
+
+        # Otherwise deploy across the cluster
+        else:
+            for node in sp_data:
+
+                # Deploy resource on each node
+                if 'Diskless' in node['driver_name']:
+                    diskless = True
+                else:
+                    diskless = False
+
+                rsc_reply = self._api_rsc_create(rsc_name=rsc_name,
+                                                 node_name=node['node_name'],
+                                                 diskless=diskless)
+
+                if not self._check_api_reply(rsc_reply, noerror_only=True):
+                    msg = _("Error creating a LINSTOR resource")
+                    LOG.error(msg)
+                    raise exception.VolumeBackendAPIException(data=msg)
 
         # If the controller is diskless and not in the pool, create a diskless
         # resource on it
@@ -833,40 +866,53 @@ class LinstorBaseDriver(driver.VolumeDriver):
         diskful_nodes = self._get_snapshot_nodes(drbd_rsc_name)
         diskless_nodes = self._get_diskless_nodes(drbd_rsc_name)
 
-        if rsc_list_reply:
-            # Remove diskless nodes first
-            if diskless_nodes:
-                for node in diskless_nodes:
-                    rsc_reply = self._api_rsc_delete(
-                        node_name=node,
-                        rsc_name=drbd_rsc_name)
-                    if not self._check_api_reply(rsc_reply, noerror_only=True):
-                        msg = _("Error deleting a diskless LINSTOR resource")
+        # If autoplace was used, use Resource class
+        if self.ap_count:
+            new_rsc = linstor.Resource(drbd_rsc_name, self.default_uri)
+            rsc_reply = new_rsc.delete()
+            if rsc_reply:
+                msg = _("Error deleting an autoplaced LINSTOR resource")
+                LOG.error(msg)
+                raise exception.VolumeBackendAPIException(data=msg)
+
+        # Delete all resources in a cluster manually if not autoplaced
+        else:
+            if rsc_list_reply:
+                # Remove diskless nodes first
+                if diskless_nodes:
+                    for node in diskless_nodes:
+                        rsc_reply = self._api_rsc_delete(
+                            node_name=node,
+                            rsc_name=drbd_rsc_name)
+                        if not self._check_api_reply(rsc_reply,
+                                                     noerror_only=True):
+                            msg = _("Error deleting a diskless LINSTOR rsc")
+                            LOG.error(msg)
+                            raise exception.VolumeBackendAPIException(data=msg)
+
+                # Remove diskful nodes
+                if diskful_nodes:
+                    for node in diskful_nodes:
+                        rsc_reply = self._api_rsc_delete(
+                            node_name=node,
+                            rsc_name=drbd_rsc_name)
+                        if not self._check_api_reply(rsc_reply,
+                                                     noerror_only=True):
+                            msg = _("Error deleting a LINSTOR resource")
+                            LOG.error(msg)
+                            raise exception.VolumeBackendAPIException(data=msg)
+
+                # Delete VD
+                vd_reply = self._api_volume_dfn_delete(drbd_rsc_name, 0)
+                if not vd_reply:
+                    if not self._check_api_reply(vd_reply):
+                        msg = _("Error deleting a LINSTOR volume definition")
                         LOG.error(msg)
                         raise exception.VolumeBackendAPIException(data=msg)
 
-            # Remove diskful nodes
-            if diskful_nodes:
-                for node in diskful_nodes:
-                    rsc_reply = self._api_rsc_delete(
-                        node_name=node,
-                        rsc_name=drbd_rsc_name)
-                    if not self._check_api_reply(rsc_reply, noerror_only=True):
-                        msg = _("Error deleting a LINSTOR resource")
-                        LOG.error(msg)
-                        raise exception.VolumeBackendAPIException(data=msg)
-
-            # Delete VD
-            vd_reply = self._api_volume_dfn_delete(drbd_rsc_name, 0)
-            if not vd_reply:
-                if not self._check_api_reply(vd_reply):
-                    msg = _("Error deleting a LINSTOR volume definition")
-                    LOG.error(msg)
-                    raise exception.VolumeBackendAPIException(data=msg)
-
-            # Delete RD
-            # Will fail if snapshot exists but expected
-            self._api_rsc_dfn_delete(drbd_rsc_name)
+                # Delete RD
+                # Will fail if snapshot exists but expected
+                self._api_rsc_dfn_delete(drbd_rsc_name)
 
         return True
 
