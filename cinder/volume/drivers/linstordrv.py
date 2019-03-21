@@ -518,8 +518,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 allocated_sizes_gb.append(sp_allocated_size_gb)
 
         single_pool["pool_name"] = data["volume_backend_name"]
-        single_pool["free_capacity_gb"] = min(free_capacity_gb)
-        single_pool["total_capacity_gb"] = min(total_capacity_gb)
+        single_pool["free_capacity_gb"] = min(free_capacity_gb) if free_capacity_gb else 0
+        single_pool["total_capacity_gb"] = min(total_capacity_gb) if total_capacity_gb else 0
         single_pool["provisioned_capacity_gb"] = max(allocated_sizes_gb)
         single_pool["reserved_percentage"] = (
             self.configuration.reserved_percentage)
@@ -577,17 +577,18 @@ class LinstorBaseDriver(driver.VolumeDriver):
         rsc_list_reply = self._get_api_resource_list()  # reply in dict
 
         snap_list = []
-        for rsc in rsc_list_reply['resources']:
-            if rsc['name'] != resource:
-                continue
+        if 'resources' in rsc_list_reply:
+            for rsc in rsc_list_reply['resources']:
+                if rsc['name'] != resource:
+                    continue
 
-            # Diskless nodes are not available for snapshots
-            diskless = False
-            if 'rscFlags' in rsc:
-                if 'DISKLESS' in rsc['rscFlags']:
-                    diskless = True
-            if not diskless:
-                snap_list.append(rsc['nodeName'])
+                # Diskless nodes are not available for snapshots
+                diskless = False
+                if 'rscFlags' in rsc:
+                    if 'DISKLESS' in rsc['rscFlags']:
+                        diskless = True
+                if not diskless:
+                    snap_list.append(rsc['nodeName'])
 
         return snap_list
 
@@ -596,13 +597,14 @@ class LinstorBaseDriver(driver.VolumeDriver):
         rsc_list_reply = self._get_api_resource_list()
 
         diskless_list = []
-        for rsc in rsc_list_reply['resources']:
-            if rsc['name'] != resource:
-                continue
+        if 'resources' in rsc_list_reply:
+            for rsc in rsc_list_reply['resources']:
+                if rsc['name'] != resource:
+                    continue
 
-            if 'rscFlags' in rsc:
-                if 'DISKLESS' in rsc['rscFlags']:
-                    diskless_list.append(rsc['nodeName'])
+                if 'rscFlags' in rsc:
+                    if 'DISKLESS' in rsc['rscFlags']:
+                        diskless_list.append(rsc['nodeName'])
 
         return diskless_list
 
@@ -742,6 +744,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 raise exception.VolumeBackendAPIException(data=msg)
 
     def create_volume(self, volume):
+
         # Check for Storage Pool List
         sp_data = self._get_storage_pool()
         rsc_size = volume['size']
