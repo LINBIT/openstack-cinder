@@ -83,7 +83,8 @@ Reset a volume's statuses
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
 Administrator only. Resets the status, attach status, revert to snapshot,
-and migration status for a volume. Specify the ``os-reset_status`` action in the request body.
+and migration status for a volume. Specify the ``os-reset_status`` action in
+the request body.
 
 Response codes
 --------------
@@ -117,8 +118,8 @@ Revert volume to snapshot
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Revert a volume to its latest snapshot, this API only support reverting a detached volume,
-and the volume status must be ``available``.
+Revert a volume to its latest snapshot, this API only support reverting a
+detached volume, and the volume status must be ``available``.
 
 Available since API microversion ``3.40``.
 
@@ -158,7 +159,8 @@ Set image metadata for a volume
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Sets the image metadata for a volume. Specify the ``os-set_image_metadata`` action in the request body.
+Sets the image metadata for a volume. Specify the ``os-set_image_metadata``
+action in the request body.
 
 Response codes
 --------------
@@ -205,7 +207,9 @@ Remove image metadata from a volume
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Removes image metadata, by key, from a volume. Specify the ``os-unset_image_metadata`` action in the request body and the ``key`` for the metadata key and value pair that you want to remove.
+Removes image metadata, by key, from a volume. Specify the
+``os-unset_image_metadata`` action in the request body and the ``key`` for the
+metadata key and value pair that you want to remove.
 
 Response codes
 --------------
@@ -256,7 +260,7 @@ Request
 
    - project_id: project_id_path
    - volume_id: volume_id_path
-   - os-vol-image-meta: os-show_image_metadata
+   - os-show_image_metadata: os-show_image_metadata
 
 Request Example
 ---------------
@@ -284,7 +288,8 @@ Attach volume to a server
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Attaches a volume to a server. Specify the ``os-attach`` action in the request body.
+Attaches a volume to a server. Specify the ``os-attach`` action in the request
+body.
 
 Preconditions
 
@@ -325,7 +330,8 @@ Detach volume from server
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Detaches a volume from a server. Specify the ``os-detach`` action in the request body.
+Detaches a volume from a server. Specify the ``os-detach`` action in the
+request body.
 
 Preconditions
 
@@ -398,7 +404,8 @@ Force detach a volume
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Forces a volume to detach. Specify the ``os-force_detach`` action in the request body.
+Forces a volume to detach. Specify the ``os-force_detach`` action in the
+request body.
 
 Rolls back an unsuccessful detach operation after you disconnect
 the volume.
@@ -439,7 +446,8 @@ Retype a volume
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Change type of existing volume. Specify the ``os-retype`` action in the request body.
+Change type of existing volume. Specify the ``os-retype`` action in the request
+body.
 
 Change the volume type of existing volume, Cinder may migrate the volume to
 proper volume host according to the new volume type.
@@ -546,13 +554,63 @@ Request Example
    :language: javascript
 
 
+Complete migration of a volume
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
+
+Specify the ``os-migrate_volume_completion`` action in the request body.
+
+Complete the migration of a volume, updating the new volume in the DB,
+returning the ``status`` of the new volume to that of the original volume
+and finally deleting the original volume.
+
+**Preconditions**
+
+* Both the original and new volume ``migration_status`` must be ``None`` or
+  both must be set to a non ``None`` value.
+* Additionally when set the new volume ``migration_status`` must take the
+  form of ``target:VOLUME_UUID`` where VOLUME_UUID is the original volume UUID.
+
+**Asynchronous Postconditions**
+
+On success, the volume ``status`` will return to its original status of
+``available`` or ``in-use`` and the ``migration_status`` will be ``success``.
+On failure, the ``migration_status`` will be ``error``.
+
+Response codes
+--------------
+
+.. rest_status_code:: success ../status.yaml
+
+   - 202
+
+
+Request
+-------
+
+.. rest_parameters:: parameters.yaml
+
+   - volume_id: volume_id_path
+   - project_id: project_id_path
+   - os-migrate_volume_completion: os-migrate_volume_completion
+   - new_volume: new_volume
+   - error: migration_completion_error
+
+Request Example
+---------------
+
+.. literalinclude:: ./samples/volume-os-migrate_volume_completion-request.json
+   :language: javascript
+
+
 Force delete a volume
 ~~~~~~~~~~~~~~~~~~~~~
 
 .. rest_method::  POST /v3/{project_id}/volumes/{volume_id}/action
 
-Attempts force-delete of volume, regardless of state. Specify the ``os-force_delete`` action
-in the request body.
+Attempts force-delete of volume, regardless of state. Specify the
+``os-force_delete`` action in the request body.
 
 Response codes
 --------------
@@ -644,7 +702,7 @@ Request
 Request Example
 ---------------
 
-.. literalinclude:: ./samples/volume-upload-to-image-request.json
+.. literalinclude:: ./samples/volume_actions/volume-upload-to-image-request.json
    :language: javascript
 
 Response Parameters
@@ -670,7 +728,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/volume-upload-to-image-response.json
+.. literalinclude:: ./samples/volume_actions/volume-upload-to-image-response.json
    :language: javascript
 
 

@@ -1040,6 +1040,12 @@ migrate_lock_volume:
   in: body
   required: false
   type: boolean
+migration_completion_error:
+  description: |
+    Used to indicate if an error has occured elsewhere that requires clean up.
+  in: body
+  required: false
+  type: boolean
 # NOTE(mriedem): We can update the migration_policy retype note about encrypted
 # in-use volumes not being supported once
 # https://bugzilla.redhat.com/show_bug.cgi?id=760547 is fixed.
@@ -1213,6 +1219,12 @@ new_type:
   in: body
   required: true
   type: string
+new_volume:
+  description: |
+    The UUID of the new volume.
+  in: body
+  required: true
+  type: string
 object_count:
   description: |
     The number of objects in the backup.
@@ -1231,24 +1243,24 @@ os-detach:
   in: body
   required: true
   type: object
+os-ext-snap-attr:progress:
+  description: |
+    A percentage value for the build progress.
+  in: body
+  required: true
+  type: string
+os-ext-snap-attr:project_id:
+  description: |
+    The UUID of the owning project.
+  in: body
+  required: true
+  type: string
 os-extend:
   description: |
     The ``os-extend`` action.
   in: body
   required: true
   type: object
-os-extended-snapshot-attributes:progress:
-  description: |
-    A percentage value for the build progress.
-  in: body
-  required: true
-  type: string
-os-extended-snapshot-attributes:project_id:
-  description: |
-    The UUID of the owning project.
-  in: body
-  required: true
-  type: string
 os-force_delete:
   description: |
     The ``os-force_delete`` action.
@@ -1264,6 +1276,12 @@ os-force_detach:
 os-migrate_volume:
   description: |
     The ``os-migrate_volume`` action.
+  in: body
+  required: true
+  type: object
+os-migrate_volume_completion:
+  description: |
+    The ``os-migrate_volume_completion`` action.
   in: body
   required: true
   type: object

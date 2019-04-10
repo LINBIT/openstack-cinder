@@ -81,9 +81,12 @@ class VNXDriver(driver.ManageableVD,
           12.1.0 - Adjust max_luns_per_storage_group and
                    check_max_pool_luns_threshold
           12.1.1 - Fix perf issue when create/delete volume
+          13.0.0 - Fix bug https://bugs.launchpad.net/cinder/+bug/1817385 to
+                   make sure sg can be created again after it was destroyed
+                   under `destroy_empty_stroage_group` setting to `True`
     """
 
-    VERSION = '12.01.01'
+    VERSION = '13.00.00'
     VENDOR = 'Dell EMC'
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = "EMC_VNX_CI"
@@ -95,6 +98,10 @@ class VNXDriver(driver.ManageableVD,
         self.active_backend_id = kwargs.get('active_backend_id', None)
         self.adapter = None
         self._stats = {}
+
+    @staticmethod
+    def get_driver_options():
+        return common.VNX_OPTS
 
     def do_setup(self, context):
         if self.protocol == common.PROTOCOL_FC:

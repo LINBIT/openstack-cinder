@@ -67,6 +67,7 @@ class ApiSampleTestBase(functional_helpers._FunctionalTestBase):
     all_extensions = True
     sample_dir = None
     _project_id = True
+    _use_common_volume_api_samples = False
 
     def __init__(self, *args, **kwargs):
         super(ApiSampleTestBase, self).__init__(*args, **kwargs)
@@ -100,9 +101,17 @@ class ApiSampleTestBase(functional_helpers._FunctionalTestBase):
     def _get_sample_path(cls, name, dirname, suffix='', api_version=None):
         parts = [dirname]
         parts.append('samples')
-        parts.append(cls.sample_dir)
-        if api_version:
-            parts.append('v' + api_version)
+        # Note: if _use_common_volume_api_samples is set to True
+        # then common volume sample files present in 'volumes' directory
+        # will be used. As of now it is being used for volume POST request
+        # to avoid duplicate copy of volume req and resp sample files.
+        # Example - VolumesSampleBase's _create_volume method.
+        if cls._use_common_volume_api_samples:
+            parts.append('volumes')
+        else:
+            parts.append(cls.sample_dir)
+            if api_version:
+                parts.append('v' + api_version)
         parts.append(name + ".json" + suffix)
         return os.path.join(*parts)
 
@@ -235,7 +244,7 @@ class ApiSampleTestBase(functional_helpers._FunctionalTestBase):
                 {'expected': expected, 'result_str': result_str,
                  'result': result})
         try:
-            matched_value = match.group('id')
+            matched_value = match.group()
         except IndexError:
             if match.groups():
                 matched_value = match.groups()[0]
@@ -261,8 +270,17 @@ class ApiSampleTestBase(functional_helpers._FunctionalTestBase):
                 expected, result, result_str, matched_value)
         # template string
         elif isinstance(expected, six.string_types) and '%' in expected:
-            matched_value = self._compare_template(
-                expected, result, result_str, matched_value)
+            if expected[-1] == '%':
+                if result != expected:
+                    raise NoMatch(
+                        'Values do not match:\n'
+                        'Template: %(expected)s\n%(result_str)s: '
+                        '%(result)s' % {'expected': expected,
+                                        'result_str': result_str,
+                                        'result': result})
+            else:
+                matched_value = self._compare_template(
+                    expected, result, result_str, matched_value)
         # string
         elif isinstance(expected, six.string_types):
 

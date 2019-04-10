@@ -131,6 +131,7 @@ CONF = cfg.CONF
 CONF.register_opts(RBD_OPTS, group=configuration.SHARED_CONF_GROUP)
 
 EXTRA_SPECS_REPL_ENABLED = "replication_enabled"
+EXTRA_SPECS_MULTIATTACH = "multiattach"
 
 
 class RBDVolumeProxy(object):
@@ -241,6 +242,10 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
         self._is_replication_enabled = False
         self._replication_targets = []
         self._target_names = []
+
+    @staticmethod
+    def get_driver_options():
+        return RBD_OPTS
 
     def _get_target_config(self, target_id):
         """Get a replication target from known replication targets."""
@@ -548,14 +553,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
             'free_capacity_gb': 'unknown',
             'reserved_percentage': (
                 self.configuration.safe_get('reserved_percentage')),
-            # NOTE(eharney): Do not enable multiattach for this driver.
-            # For multiattach to work correctly, the exclusive-lock
-            # feature required by ceph journaling must be disabled.
-            # This has implications for replication and other Cinder
-            # operations.
-            # Multiattach support for this driver will be investigated
-            # as multi-attach support in Cinder matures.
-            'multiattach': False,
+            'multiattach': True,
             'thin_provisioning_support': True,
             'max_over_subscription_ratio': (
                 self.configuration.safe_get('max_over_subscription_ratio')),
@@ -721,7 +719,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
                     raise exception.VolumeBackendAPIException(data=msg)
 
             try:
-                volume_update = self._enable_replication_if_needed(volume)
+                volume_update = self._setup_volume(volume)
             except Exception:
                 self.RBDProxy().remove(client.ioctx, dest_name)
                 src_volume.unprotect_snap(clone_snap)
@@ -761,17 +759,50 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
         return {'replication_status': fields.ReplicationStatus.ENABLED,
                 'replication_driver_data': driver_data}
 
+    def _enable_multiattach(self, volume):
+        multipath_feature_exclusions = [
+            self.rbd.RBD_FEATURE_JOURNALING,
+            self.rbd.RBD_FEATURE_FAST_DIFF,
+            self.rbd.RBD_FEATURE_OBJECT_MAP,
+            self.rbd.RBD_FEATURE_EXCLUSIVE_LOCK,
+        ]
+        vol_name = utils.convert_str(volume.name)
+        with RBDVolumeProxy(self, vol_name) as image:
+            for feature in multipath_feature_exclusions:
+                if image.features() & feature:
+                    image.update_features(feature, False)
+
     def _is_replicated_type(self, volume_type):
         # We do a safe attribute get because volume_type could be None
         specs = getattr(volume_type, 'extra_specs', {})
         return specs.get(EXTRA_SPECS_REPL_ENABLED) == "<is> True"
 
-    def _enable_replication_if_needed(self, volume):
-        if self._is_replicated_type(volume.volume_type):
+    def _is_multiattach_type(self, volume_type):
+        # We do a safe attribute get because volume_type could be None
+        specs = getattr(volume_type, 'extra_specs', {})
+        return specs.get(EXTRA_SPECS_MULTIATTACH) == "<is> True"
+
+    def _setup_volume(self, volume):
+        want_replication = self._is_replicated_type(volume.volume_type)
+        want_multiattach = self._is_multiattach_type(volume.volume_type)
+
+        if want_replication and want_multiattach:
+            msg = _('Replication and Multiattach are mutually exclusive.')
+            raise exception.RBDDriverException(reason=msg)
+
+        if want_replication:
             return self._enable_replication(volume)
+
+        update = None
+
         if self._is_replication_enabled:
-            return {'replication_status': fields.ReplicationStatus.DISABLED}
-        return None
+            update = {'replication_status':
+                      fields.ReplicationStatus.DISABLED}
+
+        if want_multiattach:
+            self._enable_multiattach(volume)
+
+        return update
 
     def _check_encryption_provider(self, volume, context):
         """Check that this is a LUKS encryption provider.
@@ -865,13 +896,14 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
                                    old_format=False,
                                    features=client.features)
 
-            try:
-                volume_update = self._enable_replication_if_needed(volume)
-            except Exception:
+        try:
+            volume_update = self._setup_volume(volume)
+        except Exception:
+            with excutils.save_and_reraise_exception():
+                LOG.error('Error creating rbd image %(vol)s.',
+                          {'vol': vol_name})
                 self.RBDProxy().remove(client.ioctx, vol_name)
-                err_msg = (_('Failed to enable image replication'))
-                raise exception.ReplicationError(reason=err_msg,
-                                                 volume_id=volume.id)
+
         return volume_update
 
     def _flatten(self, pool, volume_name):
@@ -900,7 +932,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
                                       order=order)
 
             try:
-                volume_update = self._enable_replication_if_needed(volume)
+                volume_update = self._setup_volume(volume)
             except Exception:
                 self.RBDProxy().remove(dest_client.ioctx, vol_name)
                 err_msg = (_('Failed to enable image replication'))
@@ -1160,6 +1192,17 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
 
     def retype(self, context, volume, new_type, diff, host):
         """Retype from one volume type to another on the same backend."""
+
+        # NOTE: There is no mechanism to store prior image features when
+        # creating a multiattach volume.  So retyping to non-multiattach
+        # would result in an RBD image that lacks several popular
+        # features (object-map, fast-diff, etc).  Without saving prior
+        # state as we do for replication, it is impossible to know which
+        # feautures to restore.
+        if self._is_multiattach_type(volume.volume_type):
+            msg = _('Retyping from multiattach is not supported.')
+            raise exception.RBDDriverException(reason=msg)
+
         old_vol_replicated = self._is_replicated_type(volume.volume_type)
         new_vol_replicated = self._is_replicated_type(new_type)
 
@@ -1381,7 +1424,20 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
 
     def _get_fsid(self):
         with RADOSClient(self) as client:
-            return client.cluster.get_fsid()
+            # Librados's get_fsid is represented as binary
+            # in py3 instead of str as it is in py2.
+            # This causes problems with cinder rbd
+            # driver as we rely on get_fsid return value
+            # which should be string, not bytes.
+            # Decode binary to str fixes these issues.
+            # Fix with encodeutils.safe_decode CAN BE REMOVED
+            # after librados's fix will be in stable for some time.
+            #
+            # More informations:
+            # https://bugs.launchpad.net/glance-store/+bug/1816721
+            # https://bugs.launchpad.net/cinder/+bug/1816468
+            # https://tracker.ceph.com/issues/38381
+            return encodeutils.safe_decode(client.cluster.get_fsid())
 
     def _is_cloneable(self, image_location, image_meta):
         try:
@@ -1517,7 +1573,7 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
         # We may need to re-enable replication because we have deleted the
         # original image and created a new one using the command line import.
         try:
-            self._enable_replication_if_needed(volume)
+            self._setup_volume(volume)
         except Exception:
             err_msg = (_('Failed to enable image replication'))
             raise exception.ReplicationError(reason=err_msg,
@@ -1746,8 +1802,9 @@ class RBDDriver(driver.CloneableImageVD, driver.MigrateVD,
 
         with linuxrbd.RBDClient(rbd_user, rbd_pool, conffile=rbd_ceph_conf,
                                 rbd_cluster_name=rbd_cluster_name) as target:
-            if ((rbd_fsid != self._get_fsid() or
-                 rbd_fsid != target.client.get_fsid())):
+            if (rbd_fsid != self._get_fsid()) or \
+                    (rbd_fsid != encodeutils.safe_decode(
+                        target.client.get_fsid())):
                 LOG.info('Migration between clusters is not supported. '
                          'Falling back to generic migration.')
                 return refuse_to_migrate

@@ -186,7 +186,7 @@ class PowerMaxRest(object):
                     "Cinder Volume service to revert back to the primary "
                     "Unisphere instance.")
             self.u4p_failover_lock = False
-            raise exception.VolumeBackendAPIException(data=msg)
+            raise exception.VolumeBackendAPIException(message=msg)
 
     def request(self, target_uri, method, params=None, request_object=None,
                 u4p_check=False, retry=False):
@@ -287,8 +287,8 @@ class PowerMaxRest(object):
             LOG.exception(msg, {'method': method, 'url': url,
                                 'e': six.text_type(e)})
             raise exception.VolumeBackendAPIException(
-                data=(msg, {'method': method, 'url': url,
-                            'e': six.text_type(e)}))
+                message=(msg, {'method': method, 'url': url,
+                               'e': six.text_type(e)}))
 
         return status_code, message
 
@@ -326,7 +326,7 @@ class PowerMaxRest(object):
                 exception_message = (_("Issue encountered waiting for job."))
                 LOG.exception(exception_message)
                 raise exception.VolumeBackendAPIException(
-                    data=exception_message)
+                    message=exception_message)
 
             if retries > int(extra_specs[utils.RETRIES]):
                 LOG.error("_wait_for_job_complete failed after "
@@ -389,7 +389,7 @@ class PowerMaxRest(object):
                     'operation': operation, 'sc': status_code,
                     'message': message})
             raise exception.VolumeBackendAPIException(
-                data=exception_message)
+                message=exception_message)
 
     def wait_for_job(self, operation, status_code, job, extra_specs):
         """Check if call is async, wait for it to complete.
@@ -413,7 +413,7 @@ class PowerMaxRest(object):
                         'error': six.text_type(result), 'status': status})
                 LOG.error(exception_message)
                 raise exception.VolumeBackendAPIException(
-                    data=exception_message)
+                    message=exception_message)
         return task
 
     @staticmethod
@@ -456,6 +456,7 @@ class PowerMaxRest(object):
                       {'e': e})
         if sc == STATUS_200:
             resource_object = message
+            resource_object = self.list_pagination(resource_object)
         return resource_object
 
     def get_resource(self, array, category, resource_type,
@@ -538,7 +539,7 @@ class PowerMaxRest(object):
         operation = 'delete %(res)s resource' % {'res': resource_type}
         self.check_status_code_success(operation, status_code, message)
 
-    def get_array_serial(self, array):
+    def get_array_detail(self, array):
         """Get an array from its serial number.
 
         :param array: the array serial number
@@ -558,7 +559,7 @@ class PowerMaxRest(object):
         :returns: bool
         """
         is_next_gen = False
-        array_details = self.get_array_serial(array)
+        array_details = self.get_array_detail(array)
         if array_details:
             ucode_version = array_details['ucode'].split('.')[0]
             if ucode_version >= UCODE_5978:
@@ -602,17 +603,19 @@ class PowerMaxRest(object):
                                         resource_name=srp, params=None)
         return srp_details
 
-    def get_slo_list(self, array):
+    def get_slo_list(self, array, is_next_gen, array_model):
         """Retrieve the list of slo's from the array
 
         :param array: the array serial number
+        :param is_next_gen: next generation flag
+        :param array_model
         :returns: slo_list -- list of service level names
         """
         slo_list = []
         slo_dict = self.get_resource(array, SLOPROVISIONING, 'slo')
         if slo_dict and slo_dict.get('sloId'):
-            if not self.is_next_gen_array(array) and (
-                    any(self.get_vmax_model(array) in x for x in
+            if not is_next_gen and (
+                    any(array_model in x for x in
                         utils.VMAX_AFA_MODELS)):
                 if 'Optimized' in slo_dict.get('sloId'):
                     slo_dict['sloId'].remove('Optimized')
@@ -621,15 +624,16 @@ class PowerMaxRest(object):
                     slo_list.append(slo)
         return slo_list
 
-    def get_workload_settings(self, array):
+    def get_workload_settings(self, array, is_next_gen):
         """Get valid workload options from array.
 
         Workloads are no longer supported from HyperMaxOS 5978 onwards.
         :param array: the array serial number
+        :param is_next_gen: is next generation flag
         :returns: workload_setting -- list of workload names
         """
         workload_setting = []
-        if self.is_next_gen_array(array):
+        if is_next_gen:
             workload_setting.append('None')
         else:
             wl_details = self.get_resource(
@@ -644,13 +648,28 @@ class PowerMaxRest(object):
         :param array: the array serial number
         :return: the PowerMax/VMAX model
         """
-        vmax_version = ''
-        system_uri = ("/%(version)s/system/symmetrix/%(array)s" % {
-            'version': U4V_VERSION, 'array': array})
-        system_info = self._get_request(system_uri, SYSTEM)
+        vmax_version = None
+        system_info = self.get_array_detail(array)
         if system_info and system_info.get('model'):
             vmax_version = system_info.get('model')
         return vmax_version
+
+    def get_array_model_info(self, array):
+        """Get the PowerMax/VMAX model.
+
+        :param array: the array serial number
+        :return: the PowerMax/VMAX model
+        """
+        array_model = None
+        is_next_gen = False
+        system_info = self.get_array_detail(array)
+        if system_info and system_info.get('model'):
+            array_model = system_info.get('model')
+        if system_info:
+            ucode_version = system_info['ucode'].split('.')[0]
+            if ucode_version >= UCODE_5978:
+                is_next_gen = True
+        return array_model, is_next_gen
 
     def is_compression_capable(self, array):
         """Check if array is compression capable.
@@ -731,10 +750,10 @@ class PowerMaxRest(object):
         :param extra_specs: the extra specifications
         """
         payload = {"editStorageGroupActionParam": {
-            "expandStorageGroupParam": {
-                "addExistingStorageGroupParam": {
-                    "storageGroupId": [child_sg]}}}}
-        sc, job = self.modify_storage_group(array, parent_sg, payload)
+            "addExistingStorageGroupParam": {
+                "storageGroupId": [child_sg]}}}
+        sc, job = self.modify_storage_group(array, parent_sg, payload,
+                                            version="83")
         self.wait_for_job('Add child sg to parent sg', sc, job, extra_specs)
 
     def remove_child_sg_from_parent_sg(
@@ -838,6 +857,7 @@ class PowerMaxRest(object):
                      "addVolumeParam": {
                          "num_of_vols": 1,
                          "emulation": "FBA",
+                         "create_new_volumes": "False",
                          "volumeIdentifier": {
                              "identifier_name": volume_name,
                              "volumeIdentifierChoice": "identifier_name"},
@@ -889,8 +909,10 @@ class PowerMaxRest(object):
         :param name_id: name id - used in host_assisted migration, optional
         :returns: found_device_id
         """
-        element_name = self.utils.get_volume_element_name(volume_id)
         found_device_id = None
+        if not device_id:
+            return found_device_id
+        element_name = self.utils.get_volume_element_name(volume_id)
         vol_details = self.get_volume(array, device_id)
         if vol_details:
             vol_identifier = vol_details.get('volume_identifier', None)
@@ -1026,7 +1048,7 @@ class PowerMaxRest(object):
                     'dv': qos_unit})
             LOG.error(exception_message)
             raise exception.VolumeBackendAPIException(
-                data=exception_message)
+                message=exception_message)
         return property_dict
 
     @staticmethod
@@ -1045,7 +1067,7 @@ class PowerMaxRest(object):
                     'dl': dynamic_list})
             LOG.error(exception_message)
             raise exception.VolumeBackendAPIException(
-                data=exception_message)
+                message=exception_message)
         return property_dict
 
     def set_storagegroup_srp(
@@ -1135,7 +1157,8 @@ class PowerMaxRest(object):
             exception_message = (_("Volume %(deviceID)s not found.")
                                  % {'deviceID': device_id})
             LOG.error(exception_message)
-            raise exception.VolumeBackendAPIException(data=exception_message)
+            raise exception.VolumeBackendAPIException(
+                message=exception_message)
         return volume_dict
 
     def _get_private_volume(self, array, device_id):
@@ -1152,12 +1175,13 @@ class PowerMaxRest(object):
             volume_info = self.get_resource(
                 array, SLOPROVISIONING, 'volume', params=params,
                 private='/private')
-            volume_dict = volume_info['resultList']['result'][0]
+            volume_dict = volume_info[0]
         except (KeyError, TypeError):
             exception_message = (_("Volume %(deviceID)s not found.")
                                  % {'deviceID': device_id})
             LOG.error(exception_message)
-            raise exception.VolumeBackendAPIException(data=exception_message)
+            raise exception.VolumeBackendAPIException(
+                message=exception_message)
         return volume_dict
 
     def get_volume_list(self, array, params):
@@ -1170,9 +1194,8 @@ class PowerMaxRest(object):
         :returns: device_ids -- list
         """
         device_ids = []
-        volumes = self.get_resource(
+        volume_dict_list = self.get_resource(
             array, SLOPROVISIONING, 'volume', params=params)
-        volume_dict_list = self.list_pagination(volumes)
         try:
             for vol_dict in volume_dict_list:
                 device_id = vol_dict['volumeId']
@@ -1188,11 +1211,9 @@ class PowerMaxRest(object):
         :param params: filter parameters
         :returns: list -- dicts with volume information
         """
-        volume_info = self.get_resource(
+        return self.get_resource(
             array, SLOPROVISIONING, 'volume', params=params,
             private='/private')
-
-        return self.list_pagination(volume_info)
 
     def _modify_volume(self, array, device_id, payload):
         """Modify a volume (PUT operation).
@@ -1609,7 +1630,8 @@ class PowerMaxRest(object):
         else:
             exception_message = (_("Error retrieving masking group."))
             LOG.error(exception_message)
-            raise exception.VolumeBackendAPIException(data=exception_message)
+            raise exception.VolumeBackendAPIException(
+                message=exception_message)
         return element
 
     def get_common_masking_views(self, array, portgroup_name, ig_name):
@@ -1816,6 +1838,8 @@ class PowerMaxRest(object):
                    "generation": int(generation)}
         if restored:
             payload.update({"restore": True})
+        LOG.debug("The payload is %(payload)s.",
+                  {'payload': payload})
         return self.delete_resource(
             array, REPLICATION, 'snapshot', snap_name, payload=payload,
             private='/private')
@@ -1920,7 +1944,7 @@ class PowerMaxRest(object):
                                        "synchronization."))
                 LOG.exception(exception_message)
                 raise exception.VolumeBackendAPIException(
-                    data=exception_message)
+                    message=exception_message)
 
             if kwargs['retries'] > int(extra_specs[utils.RETRIES]):
                 LOG.error("_wait_for_sync failed after %(retries)d "
@@ -2183,7 +2207,7 @@ class PowerMaxRest(object):
                 exception_message = _("Issue encountered waiting for job.")
                 LOG.exception(exception_message)
                 raise exception.VolumeBackendAPIException(
-                    data=exception_message)
+                    message=exception_message)
 
             if retries > int(extra_specs[utils.RETRIES]):
                 LOG.error("_wait_for_consistent_state failed after "
@@ -2532,8 +2556,7 @@ class PowerMaxRest(object):
             start_position = list_info['resultList']['from']
             end_position = list_info['resultList']['to']
         except (KeyError, TypeError):
-            return result_list
-
+            return list_info
         if list_count > max_page_size:
             LOG.info("More entries exist in the result list, retrieving "
                      "remainder of results from iterator.")

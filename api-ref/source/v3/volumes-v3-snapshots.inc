@@ -75,13 +75,13 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - status: status_snap
-   - os-extended-snapshot-attributes:progress: os-extended-snapshot-attributes:progress
+   - os-extended-snapshot-attributes:progress: os-ext-snap-attr:progress
    - description: description_snap_req
    - created_at: created_at
    - name: name
    - user_id: user_id_min
    - volume_id: volume_id_snap
-   - os-extended-snapshot-attributes:project_id: os-extended-snapshot-attributes:project_id
+   - os-extended-snapshot-attributes:project_id: os-ext-snap-attr:project_id
    - size: size
    - id: id_snap
    - metadata: metadata
@@ -92,7 +92,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshots-list-detailed-response.json
+.. literalinclude:: ./samples/snapshots/snapshots-list-detailed-response.json
    :language: javascript
 
 
@@ -128,7 +128,7 @@ Request
 Request Example
 ---------------
 
-.. literalinclude:: ./samples/snapshot-create-request.json
+.. literalinclude:: ./samples/snapshots/snapshot-create-request.json
    :language: javascript
 
 Response Parameters
@@ -151,7 +151,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-create-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-create-response.json
    :language: javascript
 
 
@@ -211,7 +211,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshots-list-response.json
+.. literalinclude:: ./samples/snapshots/snapshots-list-response.json
    :language: javascript
 
 
@@ -249,7 +249,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-metadata-show-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-show-response.json
    :language: javascript
 
 
@@ -283,7 +283,7 @@ Request
 Request Example
 ---------------
 
-.. literalinclude:: ./samples/snapshot-metadata-create-request.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-create-request.json
    :language: javascript
 
 Response Parameters
@@ -296,7 +296,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-metadata-create-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-create-response.json
    :language: javascript
 
 Update a snapshot's metadata
@@ -326,7 +326,7 @@ Request
 Request Example
 ---------------
 
-.. literalinclude:: ./samples/snapshot-metadata-update-request.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-update-request.json
    :language: javascript
 
 
@@ -340,7 +340,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-metadata-update-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-update-response.json
    :language: javascript
 
 
@@ -374,14 +374,14 @@ Response Parameters
 .. rest_parameters:: parameters.yaml
 
    - status: status_snap
-   - os-extended-snapshot-attributes:progress: os-extended-snapshot-attributes:progress
+   - os-extended-snapshot-attributes:progress: os-ext-snap-attr:progress
    - description: description_snap_req
    - created_at: created_at
    - name: name
    - snapshot: snapshot_obj
    - user_id: user_id_min
    - volume_id: volume_id_snap
-   - os-extended-snapshot-attributes:project_id: os-extended-snapshot-attributes:project_id
+   - os-extended-snapshot-attributes:project_id: os-ext-snap-attr:project_id
    - size: size
    - id: id_snap
    - metadata: metadata
@@ -390,7 +390,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-show-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-show-response.json
    :language: javascript
 
 
@@ -423,7 +423,7 @@ Request
 Request Example
 ---------------
 
-.. literalinclude:: ./samples/snapshot-update-request.json
+.. literalinclude:: ./samples/snapshots/snapshot-update-request.json
    :language: javascript
 
 
@@ -447,7 +447,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-update-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-update-response.json
    :language: javascript
 
 
@@ -520,7 +520,7 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-metadata-show-key-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-show-key-response.json
    :language: javascript
 
 
@@ -528,7 +528,8 @@ Response Example
 Delete a snapshot's metadata
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. rest_method::  DELETE /v3/{project_id}/snapshots/{snapshot_id}/metadata/{key}
+.. rest_method::
+   DELETE /v3/{project_id}/snapshots/{snapshot_id}/metadata/{key}
 
 Deletes metadata for a snapshot.
 
@@ -578,7 +579,7 @@ Request
 Request Example
 ---------------
 
-.. literalinclude:: ./samples/snapshot-metadata-update-key-request.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-update-key-request.json
    :language: javascript
 
 Response Parameters
@@ -591,5 +592,5 @@ Response Parameters
 Response Example
 ----------------
 
-.. literalinclude:: ./samples/snapshot-metadata-update-key-response.json
+.. literalinclude:: ./samples/snapshots/snapshot-metadata-update-key-response.json
    :language: javascript

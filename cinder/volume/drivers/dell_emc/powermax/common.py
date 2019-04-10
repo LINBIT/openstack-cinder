@@ -184,7 +184,7 @@ class PowerMaxCommon(object):
         self.failover = False
         self._get_replication_info()
         self._get_u4p_failover_info()
-        self.nextGen = False
+        self.next_gen = False
         self._gather_info()
         self.version_dict = {}
 
@@ -199,7 +199,7 @@ class PowerMaxCommon(object):
                       "longer supported.")
         self.rest.set_rest_credentials(array_info)
         if array_info:
-            self.nextGen = self.rest.is_next_gen_array(
+            self.array_model, self.next_gen = self.rest.get_array_model_info(
                 array_info['SerialNumber'])
         finalarrayinfolist = self._get_slo_workload_combinations(
             array_info)
@@ -351,10 +351,12 @@ class PowerMaxCommon(object):
             if self.failover:
                 array = self.active_backend_id
 
-            slo_settings = self.rest.get_slo_list(array)
+            slo_settings = self.rest.get_slo_list(
+                array, self.next_gen, self.array_model)
             slo_list = [x for x in slo_settings
                         if x.lower() not in ['none', 'optimized']]
-            workload_settings = self.rest.get_workload_settings(array)
+            workload_settings = self.rest.get_workload_settings(
+                array, self.next_gen)
             workload_settings.append('None')
             slo_workload_set = set(
                 ['%(slo)s:%(workload)s' % {'slo': slo,
@@ -362,7 +364,7 @@ class PowerMaxCommon(object):
                  for slo in slo_list for workload in workload_settings])
             slo_workload_set.add('None:None')
 
-            if self.nextGen:
+            if self.next_gen:
                 LOG.warning("Workloads have been deprecated for arrays "
                             "running PowerMax OS uCode level 5978 or higher. "
                             "Any supplied workloads will be treated as None "
@@ -375,7 +377,7 @@ class PowerMaxCommon(object):
                 slo_workload_set.add('Optimized:None')
                 # If array is 5978 or greater and a VMAX AFA add legacy SL/WL
                 # combinations
-                if any(self.rest.get_vmax_model(array) in x for x in
+                if any(self.array_model in x for x in
                        utils.VMAX_AFA_MODELS):
                     slo_workload_set.add('Diamond:OLTP')
                     slo_workload_set.add('Diamond:OLTP_REP')
@@ -383,7 +385,7 @@ class PowerMaxCommon(object):
                     slo_workload_set.add('Diamond:DSS_REP')
                     slo_workload_set.add('Diamond:None')
 
-            if not any(self.rest.get_vmax_model(array) in x for x in
+            if not any(self.array_model in x for x in
                        utils.VMAX_AFA_MODELS):
                 slo_workload_set.add('Optimized:None')
 
@@ -419,6 +421,10 @@ class PowerMaxCommon(object):
         group_name = None
         group_id = None
         extra_specs = self._initial_setup(volume)
+        # Check if the RDF group is valid
+        if self.utils.is_replication_enabled(extra_specs):
+            self.get_rdf_details(extra_specs[utils.ARRAY])
+
         if 'qos' in extra_specs:
             del extra_specs['qos']
 
@@ -449,7 +455,7 @@ class PowerMaxCommon(object):
 
         self.volume_metadata.capture_create_volume(
             volume_dict['device_id'], volume, group_name, group_id,
-            extra_specs, rep_info_dict, 'create', None)
+            extra_specs, rep_info_dict, 'create')
 
         LOG.info("Leaving create_volume: %(name)s. Volume dict: %(dict)s.",
                  {'name': volume_name, 'dict': volume_dict})
@@ -514,7 +520,7 @@ class PowerMaxCommon(object):
         self.volume_metadata.capture_create_volume(
             clone_dict['device_id'], volume, None, None,
             extra_specs, rep_info_dict, 'createFromSnapshot',
-            snapshot.id)
+            source_snapshot_id=snapshot.id)
 
         return model_update
 
@@ -541,7 +547,8 @@ class PowerMaxCommon(object):
         self.volume_metadata.capture_create_volume(
             clone_dict['device_id'], clone_volume, None, None,
             extra_specs, rep_info_dict, 'createFromVolume',
-            None)
+            temporary_snapvx=clone_dict.get('snap_name'),
+            source_device_id=clone_dict.get('source_device_id'))
         return model_update
 
     def _replicate_volume(self, volume, volume_name, volume_dict, extra_specs,
@@ -620,13 +627,10 @@ class PowerMaxCommon(object):
         elif not sourcedevice_id or not snap_name:
             LOG.info("No snapshot found on the array")
         else:
-            @coordination.synchronized("emc-source-{sourcedevice_id}")
-            def do_delete_volume_snap_check_for_links(sourcedevice_id):
-                # Ensure snap has not been recently deleted
-                self.provision.delete_volume_snap_check_for_links(
-                    extra_specs[utils.ARRAY], snap_name,
-                    sourcedevice_id, extra_specs)
-            do_delete_volume_snap_check_for_links(sourcedevice_id)
+            # Ensure snap has not been recently deleted
+            self.provision.delete_volume_snap_check_for_links(
+                extra_specs[utils.ARRAY], snap_name,
+                sourcedevice_id, extra_specs)
 
             LOG.info("Leaving delete_snapshot: %(ssname)s.",
                      {'ssname': snap_name})
@@ -948,10 +952,8 @@ class PowerMaxCommon(object):
         original_vol_size = volume.size
         volume_name = volume.name
         extra_specs = self._initial_setup(volume)
-        device_id = self._find_device_on_array(volume, extra_specs)
         array = extra_specs[utils.ARRAY]
-        # Check if volume is part of an on-going clone operation
-        self._sync_check(array, device_id, extra_specs)
+        device_id = self._find_device_on_array(volume, extra_specs)
         if device_id is None:
             exception_message = (_("Cannot find Volume: %(volume_name)s. "
                                    "Extend operation.  Exiting....")
@@ -959,6 +961,8 @@ class PowerMaxCommon(object):
             LOG.error(exception_message)
             raise exception.VolumeBackendAPIException(
                 message=exception_message)
+        # Check if volume is part of an on-going clone operation
+        self._sync_check(array, device_id, extra_specs)
         __, snapvx_src, __ = self.rest.is_vol_in_rep_session(array, device_id)
         if snapvx_src:
             if not self.rest.is_next_gen_array(array):
@@ -1448,10 +1452,15 @@ class PowerMaxCommon(object):
         protocol = self.utils.get_short_protocol_type(self.protocol)
         short_host_name = self.utils.get_host_short_name(connector['host'])
         masking_view_dict[utils.SLO] = extra_specs[utils.SLO]
-        masking_view_dict[utils.WORKLOAD] = 'NONE' if self.nextGen else (
+        masking_view_dict[utils.WORKLOAD] = 'NONE' if self.next_gen else (
             extra_specs[utils.WORKLOAD])
         masking_view_dict[utils.ARRAY] = extra_specs[utils.ARRAY]
         masking_view_dict[utils.SRP] = extra_specs[utils.SRP]
+        if not extra_specs[utils.PORTGROUPNAME]:
+            LOG.warning("You must supply a valid pre-created port group "
+                        "in cinder.conf or as an extra spec. Port group "
+                        "cannot be left empty as creating a new masking "
+                        "view will fail.")
         masking_view_dict[utils.PORTGROUPNAME] = (
             extra_specs[utils.PORTGROUPNAME])
         masking_view_dict[utils.INITIATOR_CHECK] = (
@@ -1619,8 +1628,14 @@ class PowerMaxCommon(object):
         :param volume: volume object to be deleted
         :returns: volume_name (string vol name)
         """
+        source_device_id = None
         volume_name = volume.name
         extra_specs = self._initial_setup(volume)
+        prov_loc = volume.provider_location
+
+        if isinstance(prov_loc, six.string_types):
+            name = ast.literal_eval(prov_loc)
+            source_device_id = name.get('source_device_id')
 
         device_id = self._find_device_on_array(volume, extra_specs)
         if device_id is None:
@@ -1632,7 +1647,8 @@ class PowerMaxCommon(object):
         array = extra_specs[utils.ARRAY]
         # Check if the volume being deleted is a
         # source or target for copy session
-        self._sync_check(array, device_id, extra_specs)
+        self._sync_check(array, device_id, extra_specs,
+                         source_device_id=source_device_id)
         # Remove from any storage groups and cleanup replication
         self._remove_vol_and_cleanup_replication(
             array, device_id, volume_name, extra_specs, volume)
@@ -1641,22 +1657,23 @@ class PowerMaxCommon(object):
         return volume_name
 
     def _create_volume(
-            self, volume_name, volume_size, extra_specs):
+            self, volume_name, volume_size, extra_specs, in_use=False):
         """Create a volume.
 
         :param volume_name: the volume name
         :param volume_size: the volume size
         :param extra_specs: extra specifications
-        :returns: dict -- volume_dict
+        :param in_use: if the volume is in 'in-use' state
+        :return: volume_dict --dict
         :raises: VolumeBackendAPIException:
         """
         array = extra_specs[utils.ARRAY]
-        nextGen = self.rest.is_next_gen_array(array)
-        if nextGen:
+        array_model, next_gen = self.rest.get_array_model_info(array)
+        if next_gen:
             extra_specs[utils.WORKLOAD] = 'NONE'
         is_valid_slo, is_valid_workload = self.provision.verify_slo_workload(
             array, extra_specs[utils.SLO],
-            extra_specs[utils.WORKLOAD], extra_specs[utils.SRP])
+            extra_specs[utils.WORKLOAD], next_gen, array_model)
         if not is_valid_slo or not is_valid_workload:
             exception_message = (_(
                 "Either SLO: %(slo)s or workload %(workload)s is invalid. "
@@ -1678,10 +1695,17 @@ class PowerMaxCommon(object):
         do_disable_compression = self.utils.is_compression_disabled(
             extra_specs)
 
+        # If the volume is in-use, set replication config for correct SG
+        # creation
+        if in_use and self.utils.is_replication_enabled(extra_specs):
+            is_re, rep_mode = True, extra_specs['rep_mode']
+        else:
+            is_re, rep_mode = False, None
+
         storagegroup_name = self.masking.get_or_create_default_storage_group(
             array, extra_specs[utils.SRP], extra_specs[utils.SLO],
             extra_specs[utils.WORKLOAD], extra_specs,
-            do_disable_compression)
+            do_disable_compression, is_re, rep_mode)
         try:
             volume_dict = self.provision.create_volume_from_sg(
                 array, volume_name, storagegroup_name,
@@ -1747,14 +1771,14 @@ class PowerMaxCommon(object):
             workload_from_extra_spec = pool_details[1]
             # Check if legacy pool chosen
             if (workload_from_extra_spec == pool_record['srpName'] or
-                    self.nextGen):
+                    self.next_gen):
                 workload_from_extra_spec = 'NONE'
 
         elif pool_record.get('ServiceLevel'):
             slo_from_extra_spec = pool_record['ServiceLevel']
             workload_from_extra_spec = pool_record.get('Workload', 'None')
             # If workload is None in cinder.conf, convert to string
-            if not workload_from_extra_spec or self.nextGen:
+            if not workload_from_extra_spec or self.next_gen:
                 workload_from_extra_spec = 'NONE'
             LOG.info("Pool_name is not present in the extra_specs "
                      "- using slo/ workload from cinder.conf: %(slo)s/%(wl)s.",
@@ -1762,7 +1786,8 @@ class PowerMaxCommon(object):
                       'wl': workload_from_extra_spec})
 
         else:
-            slo_list = self.rest.get_slo_list(pool_record['SerialNumber'])
+            slo_list = self.rest.get_slo_list(
+                pool_record['SerialNumber'], self.next_gen, self.array_model)
             if 'Optimized' in slo_list:
                 slo_from_extra_spec = 'Optimized'
             elif 'Diamond' in slo_list:
@@ -2012,6 +2037,9 @@ class PowerMaxCommon(object):
                     clone_name, snap_name, extra_specs)
                 # Re-throw the exception.
             raise
+        # add source id and snap_name to the clone dict
+        clone_dict['source_device_id'] = source_device_id
+        clone_dict['snap_name'] = snap_name
         return clone_dict
 
     def _cleanup_target(
@@ -2036,14 +2064,39 @@ class PowerMaxCommon(object):
             array, target_device_id, clone_name, extra_specs)
 
     def _sync_check(self, array, device_id, extra_specs,
-                    tgt_only=False):
+                    tgt_only=False, source_device_id=None):
         """Check if volume is part of a SnapVx sync process.
 
         :param array: the array serial number
         :param device_id: volume instance
         :param tgt_only: Flag - return only sessions where device is target
         :param extra_specs: extra specifications
-        :param is_clone: Flag to specify if it is a clone operation
+        :param tgt_only: Flag to specify if it is a target
+        :param source_device_id: source_device_id if it has one
+        """
+        if not source_device_id and tgt_only:
+            source_device_id = self._get_target_source_device(
+                array, device_id, tgt_only)
+        if source_device_id:
+            @coordination.synchronized("emc-source-{source_device_id}")
+            def do_unlink_and_delete_snap(source_device_id):
+                self._do_sync_check(
+                    array, device_id, extra_specs, tgt_only)
+
+            do_unlink_and_delete_snap(source_device_id)
+        else:
+            self._do_sync_check(
+                array, device_id, extra_specs, tgt_only)
+
+    def _do_sync_check(
+            self, array, device_id, extra_specs, tgt_only=False):
+        """Check if volume is part of a SnapVx sync process.
+
+        :param array: the array serial number
+        :param device_id: volume instance
+        :param tgt_only: Flag - return only sessions where device is target
+        :param extra_specs: extra specifications
+        :param tgt_only: Flag to specify if it is a target
         """
         get_sessions = False
         snapvx_tgt, snapvx_src, __ = self.rest.is_vol_in_rep_session(
@@ -2066,8 +2119,10 @@ class PowerMaxCommon(object):
                     # Break the replication relationship
                     for target in targets:
                         LOG.debug("Unlinking source from target. Source: "
-                                  "%(volume)s, Target: %(target)s.",
-                                  {'volume': source, 'target': target[0]})
+                                  "%(volume)s, Target: %(target)s, "
+                                  "generation: %(generation)s.",
+                                  {'volume': source, 'target': target[0],
+                                   'generation': generation})
                         self.provision.break_replication_relationship(
                             array, target[0], source, snap_name,
                             extra_specs, generation)
@@ -2075,11 +2130,43 @@ class PowerMaxCommon(object):
                     # legacy volumes) if it is a temporary volume.
                     # Only then is it a candidate for deletion.
                     if 'temp' in snap_name or 'EMC_SMI' in snap_name:
-                        @coordination.synchronized("emc-source-{source}")
-                        def do_delete_temp_volume_snap(source):
-                            self.provision.delete_temp_volume_snap(
-                                array, snap_name, source, generation)
-                        do_delete_temp_volume_snap(source)
+                        LOG.debug("Deleting temporary snapshot. Source: "
+                                  "%(volume)s, snap name: %(snap_name)s, "
+                                  "generation: %(generation)s.",
+                                  {'volume': source, 'snap_name': snap_name,
+                                   'generation': generation})
+                        self.provision.delete_temp_volume_snap(
+                            array, snap_name, source, generation)
+
+    def _get_target_source_device(
+            self, array, device_id, tgt_only=False):
+        """Get the source device id of the target.
+
+        :param array: the array serial number
+        :param device_id: volume instance
+        :param tgt_only: Flag - return only sessions where device is target
+        return source_device_id
+        """
+        LOG.debug("Getting source device id from target %(target)s.",
+                  {'target': device_id})
+        get_sessions = False
+        source_device_id = None
+        snapvx_tgt, snapvx_src, __ = self.rest.is_vol_in_rep_session(
+            array, device_id)
+        if snapvx_tgt:
+            get_sessions = True
+        elif snapvx_src and not tgt_only:
+            get_sessions = True
+        if get_sessions:
+            snap_vx_sessions = self.rest.find_snap_vx_sessions(
+                array, device_id, tgt_only)
+            if snap_vx_sessions:
+                snap_vx_sessions.sort(
+                    key=lambda k: k['generation'], reverse=True)
+                for session in snap_vx_sessions:
+                    source_device_id = session['source_vol']
+                    break
+        return source_device_id
 
     def _clone_check(self, array, device_id, extra_specs):
         """Perform any snapvx cleanup before creating clones or snapshots
@@ -2091,14 +2178,18 @@ class PowerMaxCommon(object):
         snapvx_tgt, snapvx_src, __ = self.rest.is_vol_in_rep_session(
             array, device_id)
         if snapvx_src or snapvx_tgt:
-            snap_vx_sessions = self.rest.find_snap_vx_sessions(
-                array, device_id)
-            if snap_vx_sessions:
-                snap_vx_sessions.sort(
-                    key=lambda k: k['generation'], reverse=True)
-                self._break_relationship(
-                    snap_vx_sessions, snapvx_tgt, snapvx_src, array,
-                    extra_specs)
+            @coordination.synchronized("emc-source-{src_device_id}")
+            def do_unlink_and_delete_snap(src_device_id):
+                snap_vx_sessions = self.rest.find_snap_vx_sessions(
+                    array, src_device_id)
+                if snap_vx_sessions:
+                    snap_vx_sessions.sort(
+                        key=lambda k: k['generation'], reverse=True)
+                    self._break_relationship(
+                        snap_vx_sessions, snapvx_tgt, src_device_id, array,
+                        extra_specs)
+
+            do_unlink_and_delete_snap(device_id)
 
     def _break_relationship(
             self, snap_vx_sessions, snapvx_tgt, snapvx_src, array,
@@ -2163,13 +2254,9 @@ class PowerMaxCommon(object):
         # For older styled temp snapshots for clone
         # do a delete as well
         if is_temp:
-            @coordination.synchronized(
-                "emc-source-{source}")
-            def do_delete_temp_volume_snap(source):
-                self.provision.delete_temp_volume_snap(
-                    array, session['snap_name'], source, session['generation'])
-
-            do_delete_temp_volume_snap(session['source_vol'])
+            self.provision.delete_temp_volume_snap(
+                array, session['snap_name'], session['source_vol'],
+                session['generation'])
 
     def manage_existing(self, volume, external_ref):
         """Manages an existing PowerMax/VMAX Volume (import to Cinder).
@@ -2515,11 +2602,14 @@ class PowerMaxCommon(object):
             raise exception.VolumeBackendAPIException(
                 message=exception_message)
 
-        self._sync_check(array, device_id, extra_specs)
-
         LOG.info("Snapshot %(snap_name)s is no longer managed in "
                  "OpenStack but still remains on PowerMax/VMAX source "
                  "%(array_id)s", {'snap_name': snap_name, 'array_id': array})
+
+        LOG.warning("In order to remove the snapshot source volume from "
+                    "OpenStack you will need to either delete the linked "
+                    "SnapVX snapshot on the array or un-manage the volume "
+                    "from Cinder.")
 
     def get_manageable_volumes(self, marker, limit, offset, sort_keys,
                                sort_dirs):
@@ -2787,24 +2877,11 @@ class PowerMaxCommon(object):
                  {'volume': volume_name})
 
         extra_specs = self._initial_setup(volume)
-
         device_id = self._find_device_on_array(volume, extra_specs)
         if device_id is None:
             LOG.error("Volume %(name)s not found on the array. "
                       "No volume to migrate using retype.",
                       {'name': volume_name})
-            return False
-
-        # If the volume is attached, we can't support retype.
-        # Need to explicitly check this after the code change,
-        # as 'move' functionality will cause the volume to appear
-        # as successfully retyped, but will remove it from the masking view.
-        if volume.attach_status == 'attached':
-            LOG.error(
-                "Volume %(name)s is not suitable for storage "
-                "assisted migration using retype "
-                "as it is attached.",
-                {'name': volume_name})
             return False
 
         return self._slo_workload_migration(device_id, volume, host,
@@ -2883,7 +2960,7 @@ class PowerMaxCommon(object):
         :param extra_specs: the extra specifications
         :returns: bool
         """
-        model_update, rep_mode, move_target = None, None, False
+        model_update, rep_mode, move_target, success = None, None, False, False
         target_extra_specs = new_type['extra_specs']
         target_extra_specs[utils.SRP] = srp
         target_extra_specs[utils.ARRAY] = array
@@ -2893,52 +2970,92 @@ class PowerMaxCommon(object):
         target_extra_specs[utils.RETRIES] = extra_specs[utils.RETRIES]
         is_compression_disabled = self.utils.is_compression_disabled(
             target_extra_specs)
+
         if self.rep_config and self.rep_config.get('mode'):
             rep_mode = self.rep_config['mode']
             target_extra_specs[utils.REP_MODE] = rep_mode
         was_rep_enabled = self.utils.is_replication_enabled(extra_specs)
         is_rep_enabled = self.utils.is_replication_enabled(target_extra_specs)
-        if was_rep_enabled:
-            if not is_rep_enabled:
-                # Disable replication is True
-                self._remove_vol_and_cleanup_replication(
-                    array, device_id, volume_name, extra_specs, volume)
-                model_update = {'replication_status': REPLICATION_DISABLED,
-                                'replication_driver_data': None}
-            else:
-                # Ensure both source and target volumes are retyped
-                move_target = True
-        else:
-            if is_rep_enabled:
-                # Setup_volume_replication will put volume in correct sg
-                rep_status, rdf_dict, __ = self.setup_volume_replication(
-                    array, volume, device_id, target_extra_specs)
+
+        if volume.attach_status == 'attached':
+            # Scenario: Rep was enabled, target VT has rep disabled, need to
+            # disable replication
+            if was_rep_enabled and not is_rep_enabled:
+                self.cleanup_lun_replication(volume, volume_name,
+                                             device_id, extra_specs)
+                model_update = {
+                    'replication_status': REPLICATION_DISABLED,
+                    'replication_driver_data': None}
+
+            # Scenario: Rep was not enabled, target VT has rep enabled, need to
+            # enable replication
+            elif not was_rep_enabled and is_rep_enabled:
+                rep_status, rep_driver_data, rep_info_dict = (
+                    self.setup_inuse_volume_replication(
+                        array, volume, device_id, extra_specs))
                 model_update = {
                     'replication_status': rep_status,
-                    'replication_driver_data': six.text_type(rdf_dict)}
-                return True, model_update
+                    'replication_driver_data': six.text_type(rep_driver_data)}
 
-        try:
-            target_sg_name = self.masking.get_or_create_default_storage_group(
-                array, srp, target_slo, target_workload, extra_specs,
-                is_compression_disabled, is_rep_enabled, rep_mode)
-        except Exception as e:
-            LOG.error("Failed to get or create storage group. "
-                      "Exception received was %(e)s.", {'e': e})
-            return False
+            # Retype the device on the source array
+            success, target_sg_name = self._retype_inuse_volume(
+                array, srp, volume, device_id, extra_specs,
+                target_slo, target_workload, target_extra_specs,
+                is_compression_disabled)
 
-        success = self._retype_volume(
-            array, device_id, volume_name, target_sg_name,
-            volume, target_extra_specs)
-        if success and move_target:
-            success = self._retype_remote_volume(
-                array, volume, device_id, volume_name,
-                rep_mode, is_rep_enabled, target_extra_specs)
+            # If the volume was replication enabled both before and after
+            # retype, the volume needs to be retyped on the remote array also
+            if was_rep_enabled and is_rep_enabled:
+                success = self._retype_remote_volume(
+                    array, volume, device_id, volume_name,
+                    rep_mode, is_rep_enabled, target_extra_specs)
 
-        self.volume_metadata.capture_retype_info(
-            volume, device_id, array, srp, target_slo,
-            target_workload, target_sg_name, is_rep_enabled, rep_mode,
-            is_compression_disabled)
+        # Volume is not attached, retype as normal
+        elif volume.attach_status != 'attached':
+            if was_rep_enabled:
+                if not is_rep_enabled:
+                    # Disable replication is True
+                    self._remove_vol_and_cleanup_replication(
+                        array, device_id, volume_name, extra_specs, volume)
+                    model_update = {'replication_status': REPLICATION_DISABLED,
+                                    'replication_driver_data': None}
+                else:
+                    # Ensure both source and target volumes are retyped
+                    move_target = True
+            else:
+                if is_rep_enabled:
+                    # Setup_volume_replication will put volume in correct sg
+                    rep_status, rdf_dict, __ = self.setup_volume_replication(
+                        array, volume, device_id, target_extra_specs)
+                    model_update = {
+                        'replication_status': rep_status,
+                        'replication_driver_data': six.text_type(rdf_dict)}
+                    return True, model_update
+
+            try:
+                target_sg_name = (
+                    self.masking.get_or_create_default_storage_group(
+                        array, srp, target_slo, target_workload, extra_specs,
+                        is_compression_disabled, is_rep_enabled, rep_mode))
+            except Exception as e:
+                LOG.error("Failed to get or create storage group. "
+                          "Exception received was %(e)s.", {'e': e})
+                return False
+
+            success = self._retype_volume(
+                array, device_id, volume_name, target_sg_name,
+                volume, target_extra_specs)
+
+            if move_target:
+                success = self._retype_remote_volume(
+                    array, volume, device_id, volume_name,
+                    rep_mode, is_rep_enabled, target_extra_specs)
+
+        if success:
+            self.volume_metadata.capture_retype_info(
+                volume, device_id, array, srp, target_slo,
+                target_workload, target_sg_name, is_rep_enabled, rep_mode,
+                is_compression_disabled)
 
         return success, model_update
 
@@ -2987,6 +3104,75 @@ class PowerMaxCommon(object):
             return False
 
         return True
+
+    def _retype_inuse_volume(self, array, srp, volume, device_id, extra_specs,
+                             target_slo, target_workload, target_extra_specs,
+                             is_compression_disabled):
+        """Retype an in-use volume using storage assisted migration.
+
+        :param array: the array serial
+        :param srp: the SRP ID
+        :param volume: the volume object
+        :param device_id: the device id
+        :param extra_specs: the source volume type extra specs
+        :param target_slo: the service level of the target volume type
+        :param target_workload: the workload of the target volume type
+        :param target_extra_specs: the target extra specs
+        :param is_compression_disabled: if compression is disabled in the
+        target volume type
+        :return: if the retype was successful -- bool,
+                 the storage group the volume has moved to --str
+        """
+        success = False
+        device_info = self.rest.get_volume(array, device_id)
+        source_sg_name = device_info['storageGroupId'][0]
+        source_sg = self.rest.get_storage_group(array, source_sg_name)
+        target_extra_specs[utils.PORTGROUPNAME] = extra_specs[
+            utils.PORTGROUPNAME]
+
+        attached_host = self.utils.get_volume_attached_hostname(device_info)
+        if not attached_host:
+            LOG.error(
+                "There was an issue retrieving attached host from volume "
+                "%(volume_name)s, aborting storage-assisted migration.",
+                {'volume_name': device_id})
+            return False, None
+
+        target_sg_name, __, __, __ = self.utils.get_child_sg_name(
+            attached_host, target_extra_specs)
+        target_sg = self.rest.get_storage_group(array, target_sg_name)
+
+        if not target_sg:
+            self.provision.create_storage_group(array, target_sg_name, srp,
+                                                target_slo,
+                                                target_workload,
+                                                target_extra_specs,
+                                                is_compression_disabled)
+            parent_sg = source_sg['parent_storage_group'][0]
+            self.masking.add_child_sg_to_parent_sg(
+                array, target_sg_name, parent_sg, target_extra_specs)
+            target_sg = self.rest.get_storage_group(array, target_sg_name)
+
+        target_in_parent = self.rest.is_child_sg_in_parent_sg(
+            array, target_sg_name, target_sg['parent_storage_group'][0])
+
+        if target_sg and target_in_parent:
+            self.masking.move_volume_between_storage_groups(
+                array, device_id, source_sg_name, target_sg_name,
+                target_extra_specs)
+            success = self.rest.is_volume_in_storagegroup(
+                array, device_id, target_sg_name)
+
+        if not success:
+            LOG.error(
+                "Volume: %(volume_name)s has not been "
+                "added to target storage group %(storageGroup)s.",
+                {'volume_name': device_id,
+                 'storageGroup': target_sg_name})
+        else:
+            LOG.info("Move successful: %(success)s", {'success': success})
+
+        return success, target_sg_name
 
     def _retype_remote_volume(self, array, volume, device_id,
                               volume_name, rep_mode, is_re, extra_specs):
@@ -3191,6 +3377,65 @@ class PowerMaxCommon(object):
             replication_status=replication_status,
             rep_mode=rep_extra_specs['rep_mode'],
             rdf_group_label=self.rep_config['rdf_group_label'])
+
+        return replication_status, replication_driver_data, rep_info_dict
+
+    def setup_inuse_volume_replication(self, array, volume, device_id,
+                                       extra_specs):
+        """Setup replication for in-use volume.
+
+        :param array: the array serial number
+        :param volume: the volume object
+        :param device_id: the device id
+        :param extra_specs: the extra specifications
+        :return: replication_status -- str, replication_driver_data -- dict
+                 rep_info_dict -- dict
+        """
+        source_name = volume.name
+        LOG.debug('Starting replication setup '
+                  'for volume: %s.', source_name)
+        rdf_group_no, remote_array = self.get_rdf_details(array)
+        extra_specs['replication_enabled'] = '<is> True'
+        extra_specs['rep_mode'] = self.rep_config['mode']
+
+        rdf_vol_size = volume.size
+        if rdf_vol_size == 0:
+            rdf_vol_size = self.rest.get_size_of_device_on_array(
+                array, device_id)
+
+        target_name = self.utils.get_volume_element_name(volume.id)
+
+        rep_extra_specs = self._get_replication_extra_specs(
+            extra_specs, self.rep_config)
+        volume_dict = self._create_volume(
+            target_name, rdf_vol_size, rep_extra_specs, in_use=True)
+        target_device_id = volume_dict['device_id']
+
+        LOG.debug("Create volume replica: Target device: %(target)s "
+                  "Source Device: %(source)s "
+                  "Volume identifier: %(name)s.",
+                  {'target': target_device_id,
+                   'source': device_id,
+                   'name': target_name})
+
+        self._sync_check(array, device_id, extra_specs, tgt_only=True)
+        rdf_dict = self.rest.create_rdf_device_pair(
+            array, device_id, rdf_group_no, target_device_id, remote_array,
+            extra_specs)
+
+        LOG.info('Successfully setup replication for %s.',
+                 target_name)
+        replication_status = REPLICATION_ENABLED
+        replication_driver_data = rdf_dict
+        rep_info_dict = self.volume_metadata.gather_replication_info(
+            volume.id, 'replication', False,
+            rdf_group_no=rdf_group_no,
+            target_name=target_name, remote_array=remote_array,
+            target_device_id=target_device_id,
+            replication_status=replication_status,
+            rep_mode=rep_extra_specs['rep_mode'],
+            rdf_group_label=self.rep_config['rdf_group_label'],
+            target_array_model=rep_extra_specs['target_array_model'])
 
         return replication_status, replication_driver_data, rep_info_dict
 
@@ -3846,12 +4091,14 @@ class PowerMaxCommon(object):
 
         # Check to see if SLO and Workload are configured on the target array.
         if extra_specs[utils.SLO]:
+            rep_extra_specs['target_array_model'], next_gen = (
+                self.rest.get_array_model_info(rep_config['array']))
             is_valid_slo, is_valid_workload = (
                 self.provision.verify_slo_workload(
                     rep_extra_specs[utils.ARRAY],
                     extra_specs[utils.SLO],
-                    rep_extra_specs[utils.WORKLOAD],
-                    rep_extra_specs[utils.SRP]))
+                    rep_extra_specs[utils.WORKLOAD], next_gen,
+                    rep_extra_specs['target_array_model']))
             if not is_valid_slo:
                 LOG.warning("The target array does not support the "
                             "storage pool setting for SLO %(slo)s, "
@@ -3864,7 +4111,6 @@ class PowerMaxCommon(object):
                             "%(workload)s, setting to NONE.",
                             {'workload': extra_specs[utils.WORKLOAD]})
                 rep_extra_specs[utils.WORKLOAD] = None
-
         return rep_extra_specs
 
     @staticmethod

@@ -80,6 +80,7 @@ Response Parameters
    - status: status_group_snap
    - description: description_group_snap_req
    - group_type_id: group_type_id
+   - project_id: project_id_group_snapshot
 
 Response Example
 ----------------
@@ -135,6 +136,7 @@ Response Parameters
    - created_at: created_at
    - group_id: group_id
    - group_type_id: group_type_id
+   - project_id: project_id_group_snapshot
 
 Response Example
 ----------------
@@ -251,9 +253,11 @@ Response Example
 Reset group snapshot status
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. rest_method::  POST /v3/{project_id}/group_snapshots/{group_snapshot_id}/action
+.. rest_method::
+   POST /v3/{project_id}/group_snapshots/{group_snapshot_id}/action
 
-Resets the status for a group snapshot. Specifies the ``reset_status`` action in the request body.
+Resets the status for a group snapshot. Specifies the ``reset_status`` action
+in the request body.
 
 Response codes
 --------------

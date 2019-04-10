@@ -2,7 +2,7 @@
 # This file should be owned by (and only-writeable by) the root user
 
 [Filters]
-# cinder/volume/iscsi.py: iscsi_helper '--op' ...
+# cinder/volume/targets/iscsi.py: target_helper '--op' ...
 iscsictl: CommandFilter, iscsictl, root
 cinder-rtstool: CommandFilter, cinder-rtstool, root
 
@@ -63,9 +63,6 @@ lvextend_lvmconf_fdwarn: EnvFilter, env, root, LVM_SYSTEM_DIR=, LC_ALL=C, LVM_SU
 # cinder/brick/local_dev/lvm.py: 'lvchange -a y -K <lv>'
 lvchange: CommandFilter, lvchange, root
 
-# cinder/brick/local_dev/lvm.py: 'lvconvert', '--merge', snapshot_name
-lvconvert: CommandFilter, lvconvert, root
-
 # cinder/volume/driver.py: 'iscsiadm', '-m', 'discovery', '-t',...
 # cinder/volume/driver.py: 'iscsiadm', '-m', 'node', '-T', ...
 iscsiadm: CommandFilter, iscsiadm, root
@@ -79,9 +76,6 @@ ionice_2: ChainingRegExpFilter, ionice, root, ionice, -c[0-3]
 
 # cinder/volume/utils.py: setup_blkio_cgroup()
 cgexec: ChainingRegExpFilter, cgexec, root, cgexec, -g, blkio:\S+
-
-# cinder/volume/driver.py
-ln: CommandFilter, ln, root
 
 # cinder/image/image_utils.py
 qemu-img: EnvFilter, env, root, LC_ALL=C, qemu-img
@@ -134,9 +128,6 @@ find_maxdepth_inum: RegExpFilter, find, root, find, ^[/]*([^/\0]+(/+)?)*$, -maxd
 
 #cinder/backup/services/tsm.py
 dsmc:CommandFilter,/usr/bin/dsmc,root
-
-# cinder/volume/drivers/hgst.py
-vgc-cluster: CommandFilter, vgc-cluster, root
 
 # cinder/volume/drivers/vzstorage.py
 pstorage-mount: CommandFilter, pstorage-mount, root

@@ -126,6 +126,10 @@ class LinstorBaseDriver(driver.VolumeDriver):
             'volume_backend_name')
         self.host_name = socket.gethostname()
 
+    @staticmethod
+    def get_driver_options():
+        return linstor_opts
+
     def _ping(self):
         with lin_drv(self.default_uri) as lin:
             return lin.ping()
@@ -1012,7 +1016,7 @@ class LinstorIscsiDriver(LinstorBaseDriver):
             self.helper_driver = self.helper_name
             self.target_driver = None
         else:
-            self.helper_name = self.configuration.safe_get('iscsi_helper')
+            self.helper_name = self.configuration.safe_get('target_helper')
             self.helper_driver = self.target_mapping[self.helper_name]
             self.target_driver = importutils.import_object(
                 self.helper_driver,

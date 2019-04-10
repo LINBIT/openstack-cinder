@@ -21,8 +21,8 @@ word ``volume``::
 
 If a user makes a request without specifying a version, they will get
 the ``_MIN_API_VERSION`` as defined in
-``cinder/api/openstack/api_version_request.py``. This value is currently ``3.0``
-and is expected to remain so for quite a long time.
+``cinder/api/openstack/api_version_request.py``. This value is currently
+``3.0`` and is expected to remain so for quite a long time.
 
 The Nova project was the first to implement microversions. For full
 details please read Nova's `Kilo spec for microversions
@@ -126,6 +126,11 @@ we need a microversion".
    {rank=min; silent_fail}
    }
 
+If a patch that will require a microversion increment is proposed
+having similar intention and code with a previously merged patch
+given the previous merged patch hasn't been released, then the
+previously merged patch could be modified to include the new patch
+code under the same microversion.
 
 **Footnotes**
 
@@ -288,6 +293,11 @@ necessary to add changes to other places which describe your change:
   availability of the new API functionality. The description of the API change
   should indicate which microversion is required for the change, and it should
   refer to the numerical value of the microversion and not its constant name.
+
+* Update the ``version`` parameter in api-ref responses here ``cinder/api-ref/
+  source/v3/samples/versions/version-show-response.json`` and here
+  ``cinder/api-ref/source/v3/samples/versions/versions-response.json``
+  to the latest microversion to avoid functional test failure.
 
 Allocating a microversion
 -------------------------

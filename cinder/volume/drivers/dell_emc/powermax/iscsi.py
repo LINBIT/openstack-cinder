@@ -111,6 +111,8 @@ class PowerMaxISCSIDriver(san.SanISCSIDriver):
               - Rebrand from VMAX to PowerMax(bp/vmax-powermax-rebrand)
               - Change from 84 to 90 REST endpoints (bug #1808539)
               - Fix for PowerMax OS replication settings (bug #1812685)
+              - Support for storage-assisted in-use retype
+                (bp/powermax-storage-assisted-inuse-retype)
     """
 
     VERSION = "4.0.0"
@@ -128,6 +130,10 @@ class PowerMaxISCSIDriver(san.SanISCSIDriver):
                 self.VERSION,
                 configuration=self.configuration,
                 active_backend_id=self.active_backend_id))
+
+    @staticmethod
+    def get_driver_options():
+        return common.powermax_opts
 
     def check_for_setup_error(self):
         pass

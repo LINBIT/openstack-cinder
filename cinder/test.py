@@ -403,7 +403,22 @@ class TestCase(testtools.TestCase):
         return result
 
     # Useful assertions
-    def assert_notify_called(self, mock_notify, calls):
+    def assert_notify_called(self, mock_notify, calls, any_order=False):
+        if any_order is True:
+            for c in calls:
+                # mock_notify.call_args_list = [
+                #     mock.call('INFO', 'volume.retype', ...),
+                #     mock.call('WARN', 'cinder.fire', ...)]
+                # m = mock_notify.call_args_list
+                # m[0] = Call
+                # m[0][0] = tuple('INFO', <context>, 'volume.retype', ...)
+                if not any(m for m in mock_notify.call_args_list
+                           if (m[0][0] == c[0]     # 'INFO'
+                               and
+                               m[0][2] == c[1])):  # 'volume.retype'
+                    raise AssertionError("notify call not found: %s" % c)
+            return
+
         for i in range(0, len(calls)):
             mock_call = mock_notify.call_args_list[i]
             call = calls[i]
@@ -436,6 +451,17 @@ class TestCase(testtools.TestCase):
         msg = kwargs.pop('msg', args.pop(0) if args else '')
         kwargs.setdefault('message', msg)
         self.assertIs(False, x, *args, **kwargs)
+
+    def stub_out(self, old, new):
+        """Replace a function for the duration of the test.
+
+        Use the monkey patch fixture to replace a function for the
+        duration of a test. Useful when you want to provide fake
+        methods instead of mocks during testing.
+        This should be used instead of self.stubs.Set (which is based
+        on mox) going forward.
+        """
+        self.useFixture(fixtures.MonkeyPatch(old, new))
 
 
 class ModelsObjectComparatorMixin(object):

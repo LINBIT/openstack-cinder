@@ -95,7 +95,15 @@ sf_opts = [
 
     cfg.BoolOpt('sf_enable_vag',
                 default=False,
-                help='Utilize volume access groups on a per-tenant basis.')]
+                help='Utilize volume access groups on a per-tenant basis.'),
+    cfg.StrOpt('sf_provisioning_calc',
+               default='maxProvisionedSpace',
+               choices=['maxProvisionedSpace', 'usedSpace'],
+               help='Change how SolidFire reports used space and '
+                    'provisioning calculations. If this parameter is set to '
+                    '\'usedSpace\', the  driver will report correct '
+                    'values as expected by Cinder '
+                    'thin provisioning.')]
 
 CONF = cfg.CONF
 CONF.register_opts(sf_opts, group=configuration.SHARED_CONF_GROUP)
@@ -283,6 +291,10 @@ class SolidFireDriver(san.SanISCSIDriver):
             self.template_account_id = self._create_template_account(account)
 
         self._set_cluster_pairs()
+
+    @staticmethod
+    def get_driver_options():
+        return sf_opts
 
     def __getattr__(self, attr):
         if hasattr(self.target_driver, attr):
@@ -635,7 +647,7 @@ class SolidFireDriver(san.SanISCSIDriver):
 
         return sfaccount
 
-    def _create_sfaccount(self, project_id):
+    def _create_sfaccount(self, sf_account_name):
         """Create account on SolidFire device if it doesn't already exist.
 
         We're first going to check if the account already exists, if it does
@@ -643,7 +655,6 @@ class SolidFireDriver(san.SanISCSIDriver):
 
         """
 
-        sf_account_name = self._get_sf_account_name(project_id)
         sfaccount = self._get_sfaccount_by_name(sf_account_name)
         if sfaccount is None:
             LOG.debug('solidfire account: %s does not exist, create it...',
@@ -1090,7 +1101,8 @@ class SolidFireDriver(san.SanISCSIDriver):
         # Also: we expect this to be sorted, so we get the primary first
         # in the list
         return sorted([acc for acc in accounts if
-                       cinder_project_id in acc['username']])
+                       cinder_project_id in acc['username']],
+                      key=lambda k: k['accountID'])
 
     def _get_all_active_volumes(self, cinder_uuid=None):
         params = {}
@@ -1120,19 +1132,21 @@ class SolidFireDriver(san.SanISCSIDriver):
         # if it exists and return whichever one has count
         # available.
         for acc in accounts:
-            if self._get_volumes_for_account(
-                    acc['accountID']) > self.max_volumes_per_account:
+            if len(self._get_volumes_for_account(
+                    acc['accountID'])) < self.max_volumes_per_account:
                 return acc
         if len(accounts) == 1:
-            sfaccount = self._create_sfaccount(accounts[0]['name'] + '_')
+            sfaccount = self._create_sfaccount(accounts[0]['username'] + '_')
             return sfaccount
         return None
 
     def _get_create_account(self, proj_id):
         # Retrieve SolidFire accountID to be used for creating volumes.
         sf_accounts = self._get_sfaccounts_for_tenant(proj_id)
+
         if not sf_accounts:
-            sf_account = self._create_sfaccount(proj_id)
+            sf_account_name = self._get_sf_account_name(proj_id)
+            sf_account = self._create_sfaccount(sf_account_name)
         else:
             # Check availability for creates
             sf_account = self._get_account_create_availability(sf_accounts)
@@ -1541,12 +1555,15 @@ class SolidFireDriver(san.SanISCSIDriver):
                         self._issue_api_request('PurgeDeletedVolume', params,
                                                 endpoint=cluster['endpoint'])
 
+            # The multiattach volumes are only removed from the VAG on
+            # deletion.
+            if volume.get('multiattach'):
+                self._remove_volume_from_vags(sf_vol['volumeID'])
+
             if sf_vol['status'] == 'active':
                 params = {'volumeID': sf_vol['volumeID']}
                 self._issue_api_request('DeleteVolume', params)
                 self._issue_api_request('PurgeDeletedVolume', params)
-            if volume.get('multiattach'):
-                self._remove_volume_from_vags(sf_vol['volumeID'])
         else:
             LOG.error("Volume ID %s was not found on "
                       "the SolidFire Cluster while attempting "
@@ -1872,6 +1889,7 @@ class SolidFireDriver(san.SanISCSIDriver):
             except exception.SolidFireAPIException:
                 pass
 
+        LOG.debug("SolidFire cluster_stats: %s", self.cluster_stats)
         return self.cluster_stats
 
     def extend_volume(self, volume, new_size):
@@ -1893,6 +1911,17 @@ class SolidFireDriver(san.SanISCSIDriver):
         }
         self._issue_api_request('ModifyVolume',
                                 params, version='5.0')
+
+    def _get_provisioned_capacity(self):
+        response = self._issue_api_request('ListVolumes', {}, version='8.0')
+        volumes = response['result']['volumes']
+
+        LOG.debug("%s volumes present in cluster", len(volumes))
+        provisioned = 0
+        for vol in volumes:
+            provisioned += vol['totalSize']
+
+        return provisioned
 
     def _update_cluster_status(self):
         """Retrieve status info for the Cluster."""
@@ -1923,11 +1952,22 @@ class SolidFireDriver(san.SanISCSIDriver):
             return
 
         results = results['result']['clusterCapacity']
-        free_capacity = (
-            results['maxProvisionedSpace'] - results['usedSpace'])
 
-        data['total_capacity_gb'] = (
-            float(results['maxProvisionedSpace'] / units.Gi))
+        if self.configuration.sf_provisioning_calc == 'usedSpace':
+            free_capacity = (
+                results['maxUsedSpace'] - results['usedSpace'])
+            data['total_capacity_gb'] = results['maxUsedSpace'] / units.Gi
+            data['thin_provisioning_support'] = True
+            data['provisioned_capacity_gb'] = (
+                self._get_provisioned_capacity() / units.Gi)
+            data['max_over_subscription_ratio'] = (
+                self.configuration.max_over_subscription_ratio
+            )
+        else:
+            free_capacity = (
+                results['maxProvisionedSpace'] - results['usedSpace'])
+            data['total_capacity_gb'] = (
+                results['maxProvisionedSpace'] / units.Gi)
 
         data['free_capacity_gb'] = float(free_capacity / units.Gi)
         data['compression_percent'] = (
@@ -2012,7 +2052,7 @@ class SolidFireDriver(san.SanISCSIDriver):
         if new_project != volume['project_id']:
             # do a create_sfaccount here as this tenant
             # may not exist on the cluster yet
-            sfaccount = self._create_sfaccount(new_project)
+            sfaccount = self._get_create_account(new_project)
 
         params = {
             'volumeID': sf_vol['volumeID'],
@@ -2080,7 +2120,7 @@ class SolidFireDriver(san.SanISCSIDriver):
             'ListActiveVolumes', params)['result']['volumes']
 
         sf_ref = vols[0]
-        sfaccount = self._create_sfaccount(volume['project_id'])
+        sfaccount = self._get_create_account(volume['project_id'])
 
         attributes = {}
         qos = self._retrieve_qos_setting(volume)
