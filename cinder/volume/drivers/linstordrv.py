@@ -93,6 +93,8 @@ DM_VN_PREFIX = 'CV_'
 DM_SN_PREFIX = 'SN_'
 LVM = 'Lvm'
 LVMTHIN = 'LvmThin'
+ZFS = 'Zfs'
+ZFSTHIN = 'ZfsThin'
 
 
 class LinstorBaseDriver(driver.VolumeDriver):
@@ -238,13 +240,11 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def _api_snapshot_create(self, drbd_rsc_name, snapshot_name):
         lin = linstor.Resource(drbd_rsc_name, uri=self.default_uri)
         snap_reply = lin.snapshot_create(snapshot_name)
-
         return snap_reply
 
     def _api_snapshot_delete(self, drbd_rsc_name, snapshot_name):
         lin = linstor.Resource(drbd_rsc_name, uri=self.default_uri)
         snap_reply = lin.snapshot_delete(snapshot_name)
-
         return snap_reply
 
     def _api_rsc_dfn_delete(self, drbd_rsc_name):
@@ -326,9 +326,11 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if not lin.connected:
                 lin.connect()
 
-            new_rsc = linstor.Resource(rsc_name, self.default_uri)
+            new_rsc = linstor.Resource(name=rsc_name, uri=self.default_uri)
             new_rsc.placement.redundancy = self.ap_count
+            new_rsc.placement.storage_pool = self.default_pool
             rsc_reply = new_rsc.autoplace()
+
             return rsc_reply
 
     def _api_rsc_delete(self, rsc_name, node_name):
@@ -444,7 +446,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                         for vlm in node['vlms']:
                             sp_node['sp_vlms_uuid'].append(vlm['vlmDfnUuid'])
 
-                    if 'Diskless' in node['driver']:
+                    if node['providerKind'] == 1:
                         diskless = True
                         sp_node['sp_free'] = -1.0
                         sp_node['sp_cap'] = 0.0
@@ -460,13 +462,17 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                 units.Mi,
                                 2)
 
-                            # Driver
-                    if node['driver'] == "LvmDriver":
+                    # Driver selection
+                    if node['providerKind'] == 2:
                         sp_node['driver_name'] = LVM
-                    elif node['driver'] == "LvmThinDriver":
+                    elif node['providerKind'] == 3:
                         sp_node['driver_name'] = LVMTHIN
+                    elif node['providerKind'] == 4:
+                        sp_node['driver_name'] = ZFS
+                    elif node['providerKind'] == 5:
+                        sp_node['driver_name'] = ZFSTHIN
                     else:
-                        sp_node['driver_name'] = node['driver']
+                        sp_node['driver_name'] = str(node['providerKind'])
 
                     if diskless:
                         sp_diskless_list.append(sp_node)
@@ -558,7 +564,6 @@ class LinstorBaseDriver(driver.VolumeDriver):
                     rd_node = {}
                     rd_node["rd_uuid"] = node["rscDfnUuid"]
                     rd_node["rd_name"] = node["rscName"]
-                    rd_node["rd_port"] = node["rscDfnPort"]
 
                     if "vlmDfns" in node:
                         for vol in node["vlmDfns"]:
@@ -660,10 +665,11 @@ class LinstorBaseDriver(driver.VolumeDriver):
         snap_name = self._snapshot_name_from_cinder_snapshot(snapshot)
         rsc_name = self._drbd_resource_name_from_cinder_snapshot(snapshot)
 
-        snap_reply = self._api_snapshot_create(drbd_rsc_name=rsc_name,
-                                               snapshot_name=snap_name)
+        try:
+            self._api_snapshot_create(drbd_rsc_name=rsc_name,
+                                      snapshot_name=snap_name)
 
-        if not snap_reply:
+        except Exception:
             msg = 'ERROR creating a LINSTOR snapshot {}'.format(snap_name)
             LOG.error(msg)
             raise exception.VolumeBackendAPIException(msg)
@@ -764,7 +770,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
 
-            # Create Storage Pool (definition is implicit)
+            # Create Storage Pool
             spd_list = self._get_spd()
 
             if spd_list:
@@ -825,16 +831,17 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if node['node_name'] == self.host_name:
                 ctrl_in_sp = True
 
-        # Use autoplace if autoplace count is set
+        # Use autoplace to deploy if set
         if self.ap_count:
-            rsc_reply = self._api_rsc_autoplace(rsc_name=rsc_name)
+            try:
+                self._api_rsc_autoplace(rsc_name=rsc_name)
 
-            if rsc_reply:
-                msg = _("Error creating a LINSTOR resource")
+            except Exception:
+                msg = _("Error creating autoplaces LINSTOR resource(s)")
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
 
-        # Otherwise deploy across the cluster
+        # Otherwise deploy across the entire cluster
         else:
             for node in sp_data:
 
@@ -861,7 +868,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                              diskless=True)
 
             if not self._check_api_reply(rsc_reply, noerror_only=True):
-                msg = _("Error creating a LINSTOR resource")
+                msg = _("Error creating a LINSTOR controller resource")
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
 
@@ -877,7 +884,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
         if self.ap_count:
             new_rsc = linstor.Resource(drbd_rsc_name, self.default_uri)
             rsc_reply = new_rsc.delete()
-            if rsc_reply:
+
+            if not rsc_reply:
                 msg = _("Error deleting an autoplaced LINSTOR resource")
                 LOG.error(msg)
                 raise exception.VolumeBackendAPIException(data=msg)
@@ -1016,7 +1024,7 @@ class LinstorIscsiDriver(LinstorBaseDriver):
             self.helper_driver = self.helper_name
             self.target_driver = None
         else:
-            self.helper_name = self.configuration.safe_get('target_helper')
+            self.helper_name = self.configuration.safe_get('iscsi_helper')
             self.helper_driver = self.target_mapping[self.helper_name]
             self.target_driver = importutils.import_object(
                 self.helper_driver,
