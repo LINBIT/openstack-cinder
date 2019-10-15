@@ -32,6 +32,7 @@ import six
 from cinder.api import common
 from cinder.common import constants
 from cinder import context
+from cinder import coordination
 from cinder import db
 from cinder.db import base
 from cinder import exception
@@ -197,6 +198,12 @@ class API(base.Base):
     def _is_multiattach(self, volume_type):
         specs = getattr(volume_type, 'extra_specs', {})
         return specs.get('multiattach', 'False') == '<is> True'
+
+    def _is_encrypted(self, volume_type):
+        specs = volume_type.get('extra_specs', {})
+        if 'encryption' not in specs:
+            return False
+        return specs.get('encryption', {}) is not {}
 
     def create(self, context, size, name, description, snapshot=None,
                image_id=None, volume_type=None, metadata=None,
@@ -1643,6 +1650,11 @@ class API(base.Base):
                 context.authorize(vol_policy.MULTIATTACH_POLICY,
                                   target_obj=volume)
 
+        if tgt_is_multiattach and self._is_encrypted(new_type):
+            msg = ('Retype requested both encryption and multi-attach, '
+                   'which is not supported.')
+            raise exception.InvalidInput(reason=msg)
+
         # We're checking here in so that we can report any quota issues as
         # early as possible, but won't commit until we change the type. We
         # pass the reservations onward in case we need to roll back.
@@ -2156,6 +2168,8 @@ class API(base.Base):
         attachment_ref.save()
         return attachment_ref
 
+    @coordination.synchronized(
+        '{f_name}-{attachment_ref.volume_id}-{connector[host]}')
     def attachment_update(self, ctxt, attachment_ref, connector):
         """Update an existing attachment record."""
         # Valid items to update (connector includes mode and mountpoint):
@@ -2163,6 +2177,10 @@ class API(base.Base):
         #     a. mode (if None use value from attachment_ref)
         #     b. mountpoint (if None use value from attachment_ref)
         #     c. instance_uuid(if None use value from attachment_ref)
+
+        # This method has a synchronized() lock on the volume id
+        # because we have to prevent race conditions around checking
+        # for duplicate attachment requests to the same host.
 
         # We fetch the volume object and pass it to the rpc call because we
         # need to direct this to the correct host/backend
@@ -2178,6 +2196,29 @@ class API(base.Base):
                        'volume_status': volume_ref.status}
             LOG.error(msg)
             raise exception.InvalidVolume(reason=msg)
+
+        if (len(volume_ref.volume_attachment) > 1 and
+            not (volume_ref.multiattach or
+                 self._is_multiattach(volume_ref.volume_type))):
+            # Check whether all connection hosts are unique
+            # Multiple attachments to different hosts is permitted to
+            # support Nova instance migration.
+
+            # This particular check also does not prevent multiple attachments
+            # for a multiattach volume to the same instance.
+
+            connection_hosts = set(a.connector['host']
+                                   for a in volume_ref.volume_attachment
+                                   if a.connection_info)
+
+            if len(connection_hosts) > 0:
+                # We raced, and have more than one connection
+
+                msg = _('duplicate connectors detected on volume '
+                        '%(vol)s') % {'vol': volume_ref.id}
+
+                raise exception.InvalidVolume(reason=msg)
+
         connection_info = (
             self.volume_rpcapi.attachment_update(ctxt,
                                                  volume_ref,
