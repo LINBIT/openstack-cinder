@@ -66,6 +66,10 @@ linstor_opts = [
                     'When using iSCSI transport, this option '
                     'specifies the block size.'),
 
+    cfg.StrOpt('iscsi_helper',
+               default='tgtadm',
+               help='Target helper in case of iSCSI transport'),
+
     cfg.IntOpt('linstor_autoplace_count',
                default=0,
                help='Autoplace replication count on volume deployment. '
