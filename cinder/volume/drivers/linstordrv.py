@@ -532,7 +532,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                     local_resources.append(rsc["name"])
 
             for rsc_name in local_resources:
-                rsc = linstor.Resource(str(rsc_name))
+                rsc = linstor.Resource(str(rsc_name), uri=self.default_uri)
                 if not rsc.is_diskless(self.host_name):
                     sp_allocated_size_gb += round(
                         int(rsc.volumes[0].size) / units.Gi, 2)
@@ -879,7 +879,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         # If autoplace was used, use Resource class
         if self.ap_count:
-            new_rsc = linstor.Resource(drbd_rsc_name, self.default_uri)
+            new_rsc = linstor.Resource(drbd_rsc_name, uri=self.default_uri)
             rsc_reply = new_rsc.delete()
 
             if not rsc_reply:
