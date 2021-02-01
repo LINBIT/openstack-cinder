@@ -42,3 +42,6 @@ storpool.spopenstack>=2.2.1 # Apache-2.0
 
 # Datera
 dfs_sdk>=1.2.25 # Apache-2.0
+
+# LINSTOR
+python-linstor>=1.6.0
