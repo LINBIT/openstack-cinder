@@ -103,9 +103,10 @@ class LinstorBaseDriver(driver.VolumeDriver):
 
         1.0.0 - Initial driver
         1.0.1 - Added support for LINSTOR 0.9.12
+        1.1.0 - Updated driver to match LINSTOR backend improvements
     """
 
-    VERSION = '1.0.1'
+    VERSION = '1.1.0'
 
     # ThirdPartySystems wiki page
     CI_WIKI_NAME = 'LINBIT_LINSTOR_CI'
@@ -352,7 +353,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if not lin.connected:
                 lin.connect()
 
-            rsc = linstor.Resource(str(rsc_name))
+            rsc = linstor.Resource(str(rsc_name), self.default_uri)
             return rsc.is_diskless(self.host_name)
 
     def _api_rsc_size(self, rsc_name):
@@ -360,7 +361,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
             if not lin.connected:
                 lin.connect()
 
-            rsc = linstor.Resource(str(rsc_name))
+            rsc = linstor.Resource(str(rsc_name), self.default_uri)
             if len(rsc.volumes):
                 if "size" in rsc.volumes:
                     return rsc.volumes[0].size
