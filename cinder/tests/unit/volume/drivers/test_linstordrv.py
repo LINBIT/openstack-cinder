@@ -296,7 +296,7 @@ STORAGE_POOL_LIST_RESP = [
 ]
 
 VOLUME_STATS_RESP = {
-    'driver_version': '0.0.7',
+    'driver_version': '1.1.0',
     'pools': [{
         'QoS_support': False,
         'backend_state': 'up',
@@ -304,14 +304,14 @@ VOLUME_STATS_RESP = {
         'free_capacity_gb': 100,
         'goodness_function': None,
         'location_info': 'linstor://localhost',
-        'max_over_subscription_ratio': 0,
+        'max_over_subscription_ratio': '20.0',
         'multiattach': False,
         'pool_name': 'lin-test-driver',
         'provisioned_capacity_gb': 0.0,
         'reserved_percentage': 0,
         'thick_provisioning_support': False,
         'thin_provisioning_support': True,
-        'total_capacity_gb': 100.0,
+        'total_capacity_gb': 100,
         'total_volumes': 1,
     }],
     'vendor_name': 'LINBIT',
@@ -387,54 +387,18 @@ class LinstorBaseDriverTestCase(test.TestCase):
     def setUp(self):
         super(LinstorBaseDriverTestCase, self).setUp()
 
-        if drv is None:
-            return
-
-        self._mock = mock.Mock()
         self._fake_driver = LinstorAPIFakeDriver()
-
-        self.configuration = mock.Mock(conf.Configuration)
-
         self.driver = drv.LinstorBaseDriver(
-            configuration=self.configuration)
-        self.driver.VERSION = '0.0.7'
-        self.driver.default_rsc_size = 1
-        self.driver.default_vg_name = 'vg-1'
-        self.driver.default_downsize_factor = int('4096')
-        self.driver.default_pool = STORAGE_POOL_DEF_RESP[0]
+            configuration=conf.Configuration(None)
+        )
         self.driver.host_name = 'node-1'
-        self.driver.diskless = True
-        self.driver.default_uri = 'linstor://localhost'
         self.driver.default_backend_name = 'lin-test-driver'
-        self.driver.configuration.reserved_percentage = 0
-        self.driver.configuration.max_over_subscription_ratio = 0
-        self.driver.ap_count = 0
 
-    @mock.patch(DRIVER + 'LinstorBaseDriver._ping')
-    def test_ping(self, m_ping):
-        m_ping.return_value = self._fake_driver.fake_api_ping()
-
-        val = self.driver._ping()
-        expected = 1234
-        self.assertEqual(expected, val)
-
-    @mock.patch('uuid.uuid4')
-    def test_clean_uuid(self, m_uuid):
-        m_uuid.return_value = u'bd6472d1-dc3c-4d41-a5f0-f44271c05680'
-
-        val = self.driver._clean_uuid()
-        expected = u'bd6472d1-dc3c-4d41-a5f0-f44271c05680'
-        self.assertEqual(expected, val)
-
-    @mock.patch('uuid.uuid4')
-    def test_clean_uuid_with_braces(self, m_uuid):
-        m_uuid.return_value = u'{bd6472d1-dc3c-4d41-a5f0-f44271c05680}'
-
-        val = self.driver._clean_uuid()
-        expected = u'bd6472d1-dc3c-4d41-a5f0-f44271c05680'
-
-        m_uuid.assert_called_once()
-        self.assertEqual(expected, val)
+    def test_uris_as_string(self):
+        self.driver.uri_list = ["http://ctrl-1:3370", "ctrl-2"]
+        actual = self.driver._uris_as_string()
+        expected = "http://ctrl-1:3370,ctrl-2"
+        self.assertEqual(expected, actual)
 
     # Test volume size conversions
     def test_unit_conversions_to_linstor_1GiB(self):
@@ -1095,25 +1059,12 @@ class LinstorIscsiDriverTestCase(test.TestCase):
     def setUp(self):
         super(LinstorIscsiDriverTestCase, self).setUp()
 
-        self._mock = mock.Mock()
         self._fake_driver = LinstorAPIFakeDriver()
 
-        self.configuration = mock.Mock(conf.Configuration)
-        self.configuration.iscsi_helper = 'tgtadm'
         self.driver = drv.LinstorIscsiDriver(
-            configuration=self.configuration, h_name='tgtadm')
-
-        self.driver.VERSION = '0.0.7'
-        self.driver.default_rsc_size = 1
-        self.driver.default_vg_name = 'vg-1'
-        self.driver.default_downsize_factor = int('4096')
-        self.driver.default_pool = STORAGE_POOL_DEF_RESP[0]
-        self.driver.host_name = 'node_one'
-        self.driver.diskless = True
-        self.driver.location_info = 'LinstorIscsi:linstor://localhost'
-        self.driver.default_backend_name = 'lin-test-driver'
-        self.driver.configuration.reserved_percentage = int('0')
-        self.driver.configuration.max_over_subscription_ratio = int('0')
+            configuration=conf.Configuration(None),
+            h_name='tgtadm',
+        )
 
     @mock.patch(DRIVER + 'LinstorIscsiDriver._get_api_resource_list')
     @mock.patch(DRIVER + 'LinstorIscsiDriver._get_volume_stats')
@@ -1144,24 +1095,9 @@ class LinstorDrbdDriverTestCase(test.TestCase):
     def setUp(self):
         super(LinstorDrbdDriverTestCase, self).setUp()
 
-        self._mock = mock.Mock()
         self._fake_driver = LinstorAPIFakeDriver()
-
-        self.configuration = mock.Mock(conf.Configuration)
         self.driver = drv.LinstorDrbdDriver(
-            configuration=self.configuration)
-
-        self.driver.VERSION = '0.0.7'
-        self.driver.default_rsc_size = 1
-        self.driver.default_vg_name = 'vg-1'
-        self.driver.default_downsize_factor = int('4096')
-        self.driver.default_pool = STORAGE_POOL_DEF_RESP[0]
-        self.driver.host_name = 'node_one'
-        self.driver.diskless = True
-        self.driver.location_info = 'LinstorDrbd:linstor://localhost'
-        self.driver.default_backend_name = 'lin-test-driver'
-        self.driver.configuration.reserved_percentage = int('0')
-        self.driver.configuration.max_over_subscription_ratio = int('0')
+            configuration=conf.Configuration(None))
 
     @mock.patch(DRIVER + 'LinstorDrbdDriver._get_rsc_path')
     def test_drbd_return_drbd_config(self, m_rsc_path):
