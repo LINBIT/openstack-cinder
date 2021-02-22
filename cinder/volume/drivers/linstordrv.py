@@ -38,7 +38,8 @@ from cinder.volume import volume_utils
 
 try:
     import linstor
-    lin_drv = linstor.Linstor
+
+    lin_drv = linstor.MultiLinstor
 except ImportError:
     linstor = None
     lin_drv = None
@@ -50,9 +51,11 @@ linstor_opts = [
                help='Default Volume Group name for LINSTOR. '
                     'Not Cinder Volume.'),
 
-    cfg.StrOpt('linstor_default_uri',
-               default='linstor://localhost',
-               help='Default storage URI for LINSTOR.'),
+    cfg.ListOpt('linstor_default_uris',
+                default=['linstor://localhost'],
+                deprecated_name='linstor_default_uri',
+                help='Default storage URI(s) for LINSTOR. Use commas to '
+                     'specify multiple controllers in HA mode '),
 
     cfg.StrOpt('linstor_default_storage_pool_name',
                default='DfltStorPool',
@@ -119,8 +122,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
         self.configuration.append_config_values(linstor_opts)
         self.default_pool = self.configuration.safe_get(
             'linstor_default_storage_pool_name')
-        self.default_uri = self.configuration.safe_get(
-            'linstor_default_uri')
+        self.uri_list = self.configuration.safe_get(
+            'linstor_default_uris')
         self.default_downsize_factor = self.configuration.safe_get(
             'linstor_volume_downsize_factor')
         self.default_vg_name = self.configuration.safe_get(
@@ -139,18 +142,9 @@ class LinstorBaseDriver(driver.VolumeDriver):
     def get_driver_options():
         return linstor_opts
 
-    def _ping(self):
-        with lin_drv(self.default_uri) as lin:
-            return lin.ping()
-
-    def _clean_uuid(self):
-        """Returns a UUID string, WITHOUT braces."""
-        # Some uuid library versions put braces around the result.
-        # We don't want them, just a plain [0-9a-f-]+ string.
-        uuid_str = str(uuid.uuid4())
-        uuid_str = uuid_str.replace("{", "")
-        uuid_str = uuid_str.replace("}", "")
-        return uuid_str
+    def _uris_as_string(self):
+        """Format controller URIs for use as linstor.Resource argument"""
+        return ",".join(self.uri_list)
 
     # LINSTOR works in kiB units; Cinder uses GiB.
     def _vol_size_to_linstor(self, size):
@@ -191,42 +185,42 @@ class LinstorBaseDriver(driver.VolumeDriver):
         return drbd_resource_name
 
     def _get_api_resource_list(self):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
             api_reply = lin.resource_list()[0].__dict__['_rest_data']
             return api_reply
 
     def _get_api_resource_dfn_list(self):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
             api_reply = lin.resource_dfn_list()[0].__dict__['_rest_data']
             return api_reply
 
     def _get_api_node_list(self):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
             api_reply = lin.node_list()[0].__dict__['_rest_data']
             return api_reply
 
     def _get_api_storage_pool_dfn_list(self):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
             api_reply = lin.storage_pool_dfn_list()[0].__dict__['_rest_data']
             return api_reply
 
     def _get_api_storage_pool_list(self):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
             api_reply = lin.storage_pool_list()[0].__dict__['_rest_data']
             return api_reply
 
     def _get_api_volume_extend(self, rsc_target_name, new_size):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -237,17 +231,17 @@ class LinstorBaseDriver(driver.VolumeDriver):
             return vol_reply
 
     def _api_snapshot_create(self, drbd_rsc_name, snapshot_name):
-        lin = linstor.Resource(drbd_rsc_name, uri=self.default_uri)
+        lin = linstor.Resource(drbd_rsc_name, uri=self._uris_as_string())
         snap_reply = lin.snapshot_create(snapshot_name)
         return snap_reply
 
     def _api_snapshot_delete(self, drbd_rsc_name, snapshot_name):
-        lin = linstor.Resource(drbd_rsc_name, uri=self.default_uri)
+        lin = linstor.Resource(drbd_rsc_name, uri=self._uris_as_string())
         snap_reply = lin.snapshot_delete(snapshot_name)
         return snap_reply
 
     def _api_rsc_dfn_delete(self, drbd_rsc_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -259,7 +253,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                  storage_pool_name,
                                  storage_driver,
                                  driver_pool_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -271,7 +265,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
             return sp_reply
 
     def _api_rsc_dfn_create(self, rsc_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -279,7 +273,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
             return rsc_dfn_reply
 
     def _api_volume_dfn_create(self, rsc_name, size):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -290,7 +284,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
             return vol_dfn_reply
 
     def _api_rsc_create(self, rsc_name, node_name, diskless=False):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -308,19 +302,19 @@ class LinstorBaseDriver(driver.VolumeDriver):
             return rsc_reply
 
     def _api_rsc_autoplace(self, rsc_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
-            new_rsc = linstor.Resource(name=rsc_name, uri=self.default_uri)
-            new_rsc.placement.redundancy = self.ap_count
-            new_rsc.placement.storage_pool = self.default_pool
-            rsc_reply = new_rsc.autoplace()
+            rsc = linstor.Resource(name=rsc_name, uri=self._uris_as_string())
+            rsc.placement.redundancy = self.ap_count
+            rsc.placement.storage_pool = self.default_pool
+            rsc_reply = rsc.autoplace()
 
             return rsc_reply
 
     def _api_rsc_delete(self, rsc_name, node_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -329,27 +323,27 @@ class LinstorBaseDriver(driver.VolumeDriver):
             return rsc_reply
 
     def _api_rsc_auto_delete(self, rsc_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
-            rsc = linstor.Resource(str(rsc_name), self.default_uri)
+            rsc = linstor.Resource(str(rsc_name), self._uris_as_string())
             return rsc.delete()
 
     def _api_rsc_is_diskless(self, rsc_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
-            rsc = linstor.Resource(str(rsc_name), self.default_uri)
+            rsc = linstor.Resource(str(rsc_name), self._uris_as_string())
             return rsc.is_diskless(self.host_name)
 
     def _api_rsc_size(self, rsc_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
-            rsc = linstor.Resource(str(rsc_name), self.default_uri)
+            rsc = linstor.Resource(str(rsc_name), self._uris_as_string())
             if len(rsc.volumes):
                 if "size" in rsc.volumes:
                     return rsc.volumes[0].size
@@ -359,7 +353,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                 return 0
 
     def _api_volume_dfn_delete(self, rsc_name, volume_nr):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -371,7 +365,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                          src_rsc_name,
                                          src_snap_name,
                                          new_vol_name):
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -386,11 +380,11 @@ class LinstorBaseDriver(driver.VolumeDriver):
                                        src_snap_name,
                                        new_vol_name):
 
-        lin = linstor.Resource(src_rsc_name, uri=self.default_uri)
+        lin = linstor.Resource(src_rsc_name, uri=self._uris_as_string())
         new_rsc = lin.restore_from_snapshot(src_snap_name, new_vol_name)
 
         # Adds an aux/property KV for synchronous return from snapshot restore
-        with lin_drv(self.default_uri) as lin:
+        with lin_drv(self.uri_list) as lin:
             if not lin.connected:
                 lin.connect()
 
@@ -548,7 +542,7 @@ class LinstorBaseDriver(driver.VolumeDriver):
         single_pool["thick_provisioning_support"] = not thin_enabled
         single_pool["max_over_subscription_ratio"] = (
             self.configuration.max_over_subscription_ratio)
-        single_pool["location_info"] = self.default_uri
+        single_pool["location_info"] = self._uris_as_string()
         single_pool["total_volumes"] = num_vols
         single_pool["filter_function"] = self.get_filter_function()
         single_pool["goodness_function"] = self.get_goodness_function()
@@ -982,12 +976,8 @@ class LinstorBaseDriver(driver.VolumeDriver):
         return (False, None)
 
     def check_for_setup_error(self):
-        msg = None
         if linstor is None:
             msg = _('Linstor python package not found')
-
-        if msg is not None:
-            LOG.error(msg)
             raise exception.VolumeDriverException(message=msg)
 
     def create_export(self, context, volume, connector):
@@ -1033,7 +1023,8 @@ class LinstorIscsiDriver(LinstorBaseDriver):
         data = self._get_volume_stats()
         data["storage_protocol"] = constants.ISCSI
         data["pools"][0]["location_info"] = (
-            'LinstorIscsiDriver:' + data["pools"][0]["location_info"])
+            'LinstorIscsiDriver:' + data["pools"][0]["location_info"]
+        )
 
         return data
 
