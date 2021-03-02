@@ -1066,7 +1066,6 @@ class LinstorIscsiDriverTestCase(test.TestCase):
 
         self.driver = drv.LinstorIscsiDriver(
             configuration=conf.Configuration(None),
-            h_name='tgtadm',
         )
 
     @mock.patch(DRIVER + 'LinstorIscsiDriver._get_api_resource_list')
