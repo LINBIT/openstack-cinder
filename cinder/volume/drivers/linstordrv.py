@@ -1016,21 +1016,17 @@ class LinstorIscsiDriver(LinstorBaseDriver):
     def __init__(self, *args, **kwargs):
         super(LinstorIscsiDriver, self).__init__(*args, **kwargs)
 
-        # iSCSI target_helper
-        if 'h_name' in kwargs:
-            self.helper_name = kwargs.get('h_name')
-            self.helper_driver = self.helper_name
-            self.target_driver = None
-        else:
-            self.helper_name = self.configuration.safe_get('iscsi_helper')
-            self.helper_driver = self.target_mapping[self.helper_name]
-            self.target_driver = importutils.import_object(
-                self.helper_driver,
-                configuration=self.configuration,
-                db=self.db,
-                executor=self._execute)
+        helper_name = self.configuration.safe_get('target_helper') \
+            or self.configuration.safe_get('iscsi_helper')
+        helper_driver = self.target_mapping[helper_name]
+        self.target_driver = importutils.import_object(
+            helper_driver,
+            configuration=self.configuration,
+            db=self.db,
+            executor=self._execute,
+        )
 
-        LOG.info('START: LINSTOR DRBD driver %s', self.helper_name)
+        LOG.info('START: LINSTOR DRBD driver %s', helper_name)
 
     def get_volume_stats(self, refresh=False):
         data = self._get_volume_stats()
@@ -1061,19 +1057,15 @@ class LinstorIscsiDriver(LinstorBaseDriver):
                 'provider_auth': export_info['auth'], }
 
     def remove_export(self, context, volume):
-
         return self.target_driver.remove_export(context, volume)
 
     def initialize_connection(self, volume, connector, **kwargs):
-
         return self.target_driver.initialize_connection(volume, connector)
 
     def validate_connector(self, connector):
-
         return self.target_driver.validate_connector(connector)
 
     def terminate_connection(self, volume, connector, **kwargs):
-
         return self.target_driver.terminate_connection(volume,
                                                        connector,
                                                        **kwargs)
