@@ -934,11 +934,12 @@ class LinstorBaseDriver(driver.VolumeDriver):
             raise exception.VolumeBackendAPIException(data=msg)
 
     def create_cloned_volume(self, volume, src_vref):
-        temp_id = self._clean_uuid()
-        snapshot = {}
-        snapshot['id'] = temp_id
-        snapshot['volume_id'] = src_vref['id']
-        snapshot['volume_size'] = src_vref['size']
+        temp_id = uuid.uuid4()
+        snapshot = {
+            'id': str(temp_id),
+            'volume_id': src_vref['id'],
+            'volume_size': src_vref['size']
+        }
 
         self.create_snapshot(snapshot)
 
