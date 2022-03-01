@@ -327,7 +327,7 @@ class LinstorDriver(driver.VolumeDriver):
         :return: The property value, if set
         :rtype: str|None
         """
-        prefixed_name = self.get_prefixed_property(name)
+        prefixed_name = "linstor:" + name
         extras = volume_type.get('extra_specs', {})
         if prefixed_name in extras:
             return extras[prefixed_name]
@@ -676,7 +676,7 @@ class LinstorDriver(driver.VolumeDriver):
             p.free_space.free_capacity for p in storage_pools
         ))
         provisioned_cap = _kib_to_gib(sum(
-            rd.volume_definitions[0].size for rd in resource_dfns
+            vd.size for rd in resource_dfns for vd in rd.volume_definitions
         ))
         thin = any(p.is_thin() for p in storage_pools)
         fat = any(not p.is_fat() for p in storage_pools)
