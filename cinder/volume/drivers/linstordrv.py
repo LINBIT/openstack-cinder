@@ -917,8 +917,7 @@ class LinstorDirectTarget(targets.Target):
             volume['id']
         )
 
-        if volume['status'] == 'in-use' and \
-                len(volume['volume_attachment']) == 2:
+        if connector['host'] not in _attached_on(volume):
             LOG.debug('Trying to attach to a volume in use, looks like live '
                       'migration. Setting "allow_two_primaries=True"')
             rsc.allow_two_primaries = True
@@ -954,11 +953,12 @@ class LinstorDirectTarget(targets.Target):
             return
 
         if volume['status'] == 'in-use' and \
-                len(volume['volume_attachment']) == 2:
+                any(x != connector['host'] for x in _attached_on(volume)):
             LOG.debug('Trying to detach from a volume in use, looks like live '
                       'migration. Resetting "allow_two_primaries=False"')
             rsc.allow_two_primaries = False
 
+        # This might delete the tiebreaker. Think about a workaround!
         rsc.deactivate(connector['host'])
 
 
@@ -1100,6 +1100,17 @@ def _kib_to_gib(kib):
         linstor.SizeCalc.UNIT_KiB,
         linstor.SizeCalc.UNIT_GiB,
     )
+
+
+def _attached_on(volume):
+    """Checks if the volume is attached on another host
+
+    :param volume cinder.objects.volume.Volume: the current volume state
+    :returns: The list of hosts this is currently attached at
+    :rtype: list[str]
+    """
+    return [attachment['attached_host']
+            for attachment in volume['volume_attachment']]
 
 
 class LinstorDriverException(exception.VolumeDriverException):

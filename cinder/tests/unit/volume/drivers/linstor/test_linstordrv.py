@@ -173,21 +173,22 @@ ATTACHED_VOLUME = {
     'name': 'attached-volume',
     'id': 'attached-volume-00001',
     'status': 'in-use',
-    'volume_attachment': [{'id': 1}],
+    'volume_attachment': [{'id': 1, 'attached_host': 'test-1'}],
 }
 
 LIVE_MIGRATION_VOLUME = {
     'name': 'basic-volume',
     'id': 'basic-volume-00001',
     'status': 'in-use',
-    'volume_attachment': [{'id': 1}, {'id': 2}],
+    'volume_attachment': [{'id': 1, 'attached_host': 'test-1'}],
 }
 
 ATTACHED_LIVE_MIGRATION_VOLUME = {
     'name': 'attached-live-migration-volume',
     'id': 'attached-live-migration-volume-00001',
     'status': 'in-use',
-    'volume_attachment': [{'id': 1}, {'id': 2}],
+    'volume_attachment': [{'id': 1, 'attached_host': 'test-1'},
+                          {'id': 2, 'attached_host': 'test-2'}],
 }
 
 
@@ -430,7 +431,7 @@ class LinstorDirectTargetTestCase(test.TestCase):
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
     def test_initialize_live_migration(self):
-        connector = {'host': 'test-1'}
+        connector = {'host': 'test-2'}
         target_helper = drv.LinstorDirectTarget(
             fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
         )
@@ -443,7 +444,7 @@ class LinstorDirectTargetTestCase(test.TestCase):
         self.assertEqual(expected, actual)
         self.assertTrue(drv.linstor.resources['basic-volume']
                         ['allow_two_primaries'])
-        self.assertIn('test-1', drv.linstor.resources['basic-volume']['nodes'])
+        self.assertIn('test-2', drv.linstor.resources['basic-volume']['nodes'])
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
     def test_initialize_connection_unknown_host(self):
@@ -474,17 +475,13 @@ class LinstorDirectTargetTestCase(test.TestCase):
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
     def test_terminate_connection_live_migration(self):
-        connector = {'host': 'test-1'}
+        connector = {'host': 'test-2'}
         target_helper = drv.LinstorDirectTarget(
             fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
         )
         target_helper.terminate_connection(
             ATTACHED_LIVE_MIGRATION_VOLUME,
             connector
-        )
-        self.assertNotIn(
-            'test-1',
-            drv.linstor.resources['attached-live-migration-volume']['nodes']
         )
         self.assertFalse(drv.linstor.resources
                          ['attached-live-migration-volume']
