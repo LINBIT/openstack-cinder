@@ -67,6 +67,10 @@ linstor_opts = [
     cfg.StrOpt('linstor_default_storage_pool_name',
                help='Default LINSTOR Storage Pool to use.'),
 
+    cfg.StrOpt('linstor_default_resource_group_name',
+               help='Resource Group to use when no volume type was provided',
+               default="DfltRscGrp"),
+
     cfg.BoolOpt('linstor_direct',
                 default=False,
                 help='True, if the volume should be directly attached on the'
