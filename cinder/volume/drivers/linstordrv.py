@@ -67,6 +67,10 @@ linstor_opts = [
     cfg.StrOpt('linstor_default_storage_pool_name',
                help='Default LINSTOR Storage Pool to use.'),
 
+    cfg.StrOpt('linstor_default_resource_group_name',
+               help='Resource Group to use when no volume type was provided',
+               default="DfltRscGrp"),
+
     cfg.BoolOpt('linstor_direct',
                 default=False,
                 help='True, if the volume should be directly attached on the'
@@ -322,7 +326,7 @@ class LinstorDriver(driver.VolumeDriver):
 
         :param str name: the name of the property to retrieve (without linstor
          prefix)
-        :param cinder.objects.volume_type.VolumeTyoe volume_type: The volume
+        :param cinder.objects.volume_type.VolumeType volume_type: The volume
          type containing the extra specs to check
         :return: The property value, if set
         :rtype: str|None
@@ -341,6 +345,12 @@ class LinstorDriver(driver.VolumeDriver):
         :return:
         :rtype: linstor.ResourceGroup
         """
+        if not volume_type:
+            return linstor.ResourceGroup(
+                self.configuration.linstor_default_resource_group_name,
+                existing_client=self.c.get(),
+            )
+
         # We use the ID here, as it is unique and compatible with LINSTOR
         # naming requirements. The cinder- prefix is required as LINSTOR names
         # have to start with an alphabetic character
@@ -693,7 +703,7 @@ class LinstorDriver(driver.VolumeDriver):
             'volume_backend_name': backend_name,
             'vendor_name': 'LINBIT',
             'driver_version': self.get_version(),
-            'storage_protocol': self.target_driver.protocol,
+            'storage_protocol': self.protocol,
             'location_info': self._linstor_uri_str,
             # Multiattach works in case of ISCSI, as the backing volume
             # is only opened on the cinder host.
@@ -770,10 +780,10 @@ class LinstorDriver(driver.VolumeDriver):
 
         target_protocol = host['capabilities'].get('storage_protocol')
         if volume['status'] in {'attached', 'in-use'} and \
-                self.target_driver.protocol != target_protocol:
+                self.protocol != target_protocol:
             LOG.debug('Cannot migrate attached volume between different '
                       'transport protocols: %s -> %s',
-                      self.target_driver.protocol, target_protocol)
+                      self.protocol, target_protocol)
             return False, None
 
         return True, None
