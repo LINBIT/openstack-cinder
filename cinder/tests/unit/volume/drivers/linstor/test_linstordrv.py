@@ -586,7 +586,7 @@ class LinstorUtilsTestCase(test.TestCase):
         client = drv.linstor.MultiLinstor([])
         rsc = drv.linstor.Resource('attached-volume', existing_client=client)
 
-        with drv._temp_resource_path(client, rsc, 'test-1') as path:
+        with drv._temp_resource_path(client, rsc, 'test-1', False) as path:
             self.assertIn(
                 'test-1', drv.linstor.resources['attached-volume']['nodes']
             )
