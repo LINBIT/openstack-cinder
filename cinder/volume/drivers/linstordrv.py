@@ -74,6 +74,11 @@ linstor_opts = [
     cfg.IntOpt('linstor_timeout',
                default=60,
                help='How long to wait for a response from the Linstor API'),
+
+    cfg.BoolOpt('linstor_force_udev',
+                default=True,
+                help='True, if the driver should assume udev created links'
+                     'always exist.')
 ]
 
 LOG = logging.getLogger(__name__)  # type: logging.logging.Logger
@@ -211,7 +216,7 @@ class LinstorDriver(driver.VolumeDriver):
             raise LinstorDriverException(msg)
 
         if self._use_direct_connection():
-            self.target_driver = LinstorDirectTarget(self.c)
+            self.target_driver = LinstorDirectTarget(self.c, self._force_udev)
             self.protocol = self.target_driver.protocol
         else:
             target_driver = self.target_mapping[
@@ -241,6 +246,10 @@ class LinstorDriver(driver.VolumeDriver):
             return volume_utils.extract_host(self.host, level='host')
 
         return socket.gethostname()
+
+    @property
+    def _force_udev(self):
+        return self.configuration.safe_get('linstor_force_udev')
 
     @volume_utils.trace
     def _init_vendor_properties(self):
@@ -620,8 +629,8 @@ class LinstorDriver(driver.VolumeDriver):
             volume['id'],
         )
 
-        with _temp_resource_path(self.c.get(), rsc, self._hostname) \
-                as path:
+        with _temp_resource_path(self.c.get(), rsc, self._hostname,
+                                 self._force_udev) as path:
             attach_info = {
                 'conn': 'local',
                 'device': {'path': path},
@@ -793,7 +802,7 @@ class LinstorDriver(driver.VolumeDriver):
             LOG.debug('using non-direct driver method, need to create local '
                       'replica on cinder host')
             volume_path = _ensure_resource_path(
-                self.c.get(), rsc, self._hostname,
+                self.c.get(), rsc, self._hostname, self._force_udev
             )
 
         export_info = self.target_driver.create_export(
@@ -874,13 +883,15 @@ class LinstorDirectTarget(targets.Target):
     # but this way we stay compatible with the v1 drivers
     protocol = 'DRBD'
 
-    def __init__(self, client, *args, **kwargs):
+    def __init__(self, client, force_udev=True, *args, **kwargs):
         """Uses Linstor to deploy resources directly on the target host
 
         :param ThreadSafeLinstorClient client: the client wrapper to use
+        :param bool force_udev: Assume udev paths always exist.
         """
         super().__init__(*args, **kwargs)
         self.c = client
+        self._force_udev = force_udev
 
     def ensure_export(self, context, volume, volume_path):
         pass
@@ -910,7 +921,7 @@ class LinstorDirectTarget(targets.Target):
             rsc.allow_two_primaries = True
 
         path = _ensure_resource_path(
-            self.c.get(), rsc, connector['host']
+            self.c.get(), rsc, connector['host'], self._force_udev,
         )
         return {
             'driver_volume_type': 'local',
@@ -951,28 +962,30 @@ class LinstorDirectTarget(targets.Target):
 
 @contextlib.contextmanager
 @wrap_linstor_api_exception
-def _temp_resource_path(linstor_client, rsc, host):
+def _temp_resource_path(linstor_client, rsc, host, force_udev=True):
     """Temporarily attach the given resource on a host
 
     :param linstor.Linstor linstor_client: Client used for API calls
     :param linstor.Resource rsc: The resource to attach
     :param str host: The host as named in LINSTOR
+    :param bool force_udev: Assume udev paths always exist.
     :return: The path to the temporary device
     :rtype: str
     """
     try:
-        yield _ensure_resource_path(linstor_client, rsc, host)
+        yield _ensure_resource_path(linstor_client, rsc, host, force_udev)
     finally:
         rsc.deactivate(host)
 
 
 @wrap_linstor_api_exception
-def _ensure_resource_path(linstor_client, rsc, host):
-    """Ensure a resource is deployed on a host and return it's device path
+def _ensure_resource_path(linstor_client, rsc, host, force_udev=True):
+    """Ensure a resource is deployed on a host and return its device path
 
     :param linstor.Linstor linstor_client: Client used for API calls
     :param linstor.Resource rsc: The resource to deploy on the node
     :param str host: The host as named in Linstor
+    :param bool force_udev: Assume udev paths always exist.
     :return: The path to the deployed node
     :rtype: str
     """
@@ -980,6 +993,8 @@ def _ensure_resource_path(linstor_client, rsc, host):
     symlink = _find_symlink_to_device(linstor_client, rsc.name, host)
     if symlink:
         return symlink
+    if force_udev:
+        return "/dev/drbd/by-res/%s/0" % rsc.name
 
     return rsc.volumes[0].device_path
 
