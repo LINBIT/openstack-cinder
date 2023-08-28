@@ -84,6 +84,11 @@ linstor_opts = [
 
     cfg.StrOpt('dd_blocksize', default='64k',
                help='Block size to use when copying an image to the volume.'),
+
+    cfg.BoolOpt('linstor_force_udev',
+                default=True,
+                help='True, if the driver should assume udev created links'
+                     'always exist.')
 ]
 
 LOG = logging.getLogger(__name__)  # type: logging.logging.Logger
@@ -637,7 +642,8 @@ class LinstorDriver(driver.VolumeDriver):
         rsc = _get_existing_resource(self.c.get(), volume['name'],
                                      volume['id'])
 
-        with _temp_resource_path(self.c.get(), rsc, self._hostname) as path:
+        with _temp_resource_path(self.c.get(), rsc, self._hostname,
+                                 self._force_udev) as path:
             image_utils.fetch_to_raw(
                 context,
                 image_service,
