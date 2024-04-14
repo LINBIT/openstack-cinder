@@ -30,8 +30,11 @@ from oslo_utils import units
 
 from cinder import exception
 from cinder.i18n import _
+from cinder.image import image_utils
 from cinder import interface
 from cinder import utils as cinder_utils
+from cinder import objects
+from cinder.objects import fields
 from cinder.volume import configuration
 from cinder.volume import driver
 from cinder.volume.targets import driver as targets
@@ -76,6 +79,7 @@ linstor_opts = [
                      'target. Requires the target to be part of the Linstor '
                      'cluster. False, if the volume should be attached via '
                      'one of the transports included in Cinder (i.e. ISCSI).'),
+
     cfg.IntOpt('linstor_timeout',
                default=60,
                help='How long to wait for a response from the Linstor API'),
@@ -83,7 +87,13 @@ linstor_opts = [
     cfg.BoolOpt('linstor_force_udev',
                 default=True,
                 help='True, if the driver should assume udev created links'
-                     'always exist.')
+                     'always exist.'),
+
+    cfg.BoolOpt('linstor_use_snapshot_based_clone',
+                default=False,
+                help='True, if the driver should use clone with snapshot'
+                     '(dependent clone)'),
+
 ]
 
 LOG = logging.getLogger(__name__)  # type: logging.logging.Logger
@@ -256,6 +266,10 @@ class LinstorDriver(driver.VolumeDriver):
     def _force_udev(self):
         return self.configuration.safe_get('linstor_force_udev')
 
+    @property
+    def _use_snapshot_based_clone(self):
+        return self.configuration.safe_get('linstor_use_snapshot_based_clone')
+
     @cinder_utils.trace
     def _init_vendor_properties(self):
         """Return the vendor properties supported by this driver"""
@@ -328,6 +342,7 @@ class LinstorDriver(driver.VolumeDriver):
                         'storage',
             type='str',
         )
+
         return self._vendor_properties, 'linstor'
 
     def _get_linstor_property(self, name, volume_type):
@@ -523,7 +538,10 @@ class LinstorDriver(driver.VolumeDriver):
             volume['name'],
             volume['id'],
         )
-        rsc.delete(snapshots=False)
+        try:
+            rsc.delete(snapshots=False)
+        except linstor.LinstorError:
+            raise exception.VolumeIsBusy(volume_name=volume['name'])
 
         try:
             rg = linstor.ResourceGroup(
@@ -564,10 +582,18 @@ class LinstorDriver(driver.VolumeDriver):
             snapshot['volume']['name'],
             snapshot['volume_id'],
         )
-        rsc.snapshot_delete(snapshot['name'])
-        # This could _also_ be a snapshot created by the v1 driver, so delete
-        # try to as well
-        rsc.snapshot_delete('SN_' + snapshot['id'])
+
+        try:
+            rsc.snapshot_delete(snapshot['name'])
+        except linstor.LinstorError:
+            raise exception.SnapshotIsBusy(snapshot['name'])
+
+        try:
+            # This could _also_ be a snapshot created by the v1 driver, so
+            # delete it as well
+            rsc.snapshot_delete('SN_' + snapshot['id'])
+        except linstor.LinstorError:
+            raise exception.SnapshotIsBusy('SN_' + snapshot['id'])
 
     @wrap_linstor_api_exception
     @cinder_utils.trace
@@ -615,21 +641,65 @@ class LinstorDriver(driver.VolumeDriver):
         :param cinder.objects.volume.Volume volume: The new clone
         :param cinder.objects.volume.Volume src_vref: The volume to clone from
         """
-        temp_snap = {
-            'id': 'for-' + volume['id'],
-            'name': 'for-' + volume['id'],
-            'volume': {
-                'name': src_vref['name'],
-                'id': src_vref['id'],
-            },
-            'volume_id': src_vref['id'],
-        }
 
-        try:
-            self.create_snapshot(temp_snap)
-            return self.create_volume_from_snapshot(volume, temp_snap)
-        finally:
-            self.delete_snapshot(temp_snap)
+        if self.configuration.safe_get('linstor_use_snapshot_based_clone'):
+            ctxt = volume._context
+
+            snapshot = objects.Snapshot(ctxt)
+            snapshot.user_id = ctxt.user_id
+            snapshot.project_id = ctxt.project_id
+            snapshot.volume_id = src_vref['id']
+            snapshot.volume_size = src_vref['size']
+            snapshot.display_name = 'for-' + volume['id']
+            snapshot.status = fields.SnapshotStatus.CREATING
+
+            snapshot.create()
+            snapshot.save()
+
+            clone_snap = {
+                'id': snapshot['id'],
+                'name': 'snapshot-' + snapshot['id'],
+                'volume': {
+                    'name': src_vref['name'],
+                    'id': src_vref['id'],
+                },
+                'volume_id': src_vref['id'],
+            }
+
+            self.create_snapshot(clone_snap)
+            snapshot.status = fields.SnapshotStatus.AVAILABLE
+
+            volume.source_volid = None
+            volume.source_volstatus = None
+            volume.snapshot_id = snapshot['id']
+            volume.save()
+
+            return self.create_volume_from_snapshot(volume, snapshot)
+        else:
+            rsc = _get_existing_resource(
+                self.c.get(),
+                src_vref['name'],
+                src_vref['id'],
+            )
+            rsc.clone(volume['name'], use_zfs_clone=False)
+
+    @wrap_linstor_api_exception
+    @cinder_utils.trace
+    def copy_image_to_volume(self, context, volume, image_service, image_id):
+        rsc = _get_existing_resource(self.c.get(), volume['name'],
+                                     volume['id'])
+
+        with _temp_resource_path(self.c.get(), rsc, self._hostname,
+                                 self._force_udev) as path:
+            image_utils.fetch_to_raw(
+                context,
+                image_service,
+                image_id,
+                path,
+                self.configuration.safe_get('dd_blocksize'),
+                size=volume['size'],
+            )
+        return {}
 
     @wrap_linstor_api_exception
     @cinder_utils.trace
