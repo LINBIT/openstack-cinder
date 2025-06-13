@@ -677,10 +677,10 @@ class LinstorDriver(driver.VolumeDriver):
             self._linstor_uri_str
 
         tot = _kib_to_gib(sum(
-            p.free_space.total_capacity for p in storage_pools
+            p.free_space.total_capacity for p in storage_pools if p.free_space
         ))
         free = _kib_to_gib(sum(
-            p.free_space.free_capacity for p in storage_pools
+            p.free_space.free_capacity for p in storage_pools if p.free_space
         ))
         provisioned_cap = _kib_to_gib(sum(
             vd.size for rd in resource_dfns for vd in rd.volume_definitions
