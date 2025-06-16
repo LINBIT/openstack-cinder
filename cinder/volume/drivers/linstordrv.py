@@ -698,8 +698,6 @@ class LinstorDriver(driver.VolumeDriver):
             # Multiattach works in case of ISCSI, as the backing volume
             # is only opened on the cinder host.
             'multiattach': not self._use_direct_connection(),
-            # nova does not support resizing local volumes
-            'online_extend_support': not self._use_direct_connection(),
             'total_capacity_gb': tot,
             'provisioned_capacity_gb': provisioned_cap,
             'free_capacity_gb': free,
