@@ -681,7 +681,19 @@ class LinstorDriver(driver.VolumeDriver):
                 src_vref['name'],
                 src_vref['id'],
             )
-            rsc.clone(volume['name'], use_zfs_clone=False)
+            rsc = rsc.clone(volume['name'], use_zfs_clone=False)
+
+            try:
+                expected_size = volume['size'] * units.Gi
+                if rsc.volumes[0].size < expected_size:
+                    rsc.volumes[0].size = expected_size
+            except linstor.LinstorError:
+                LOG.exception('Could not resize restored Linstor volume, '
+                              'deleting volume')
+                rsc.delete()
+                raise
+
+            return {}
 
     @wrap_linstor_api_exception
     @cinder_utils.trace
