@@ -1,0 +1,10 @@
+---
+features:
+  - |
+    The LINSTOR driver gained the ``linstor_connector_host_property`` option
+    for direct attach. When Nova's ``host`` option does not equal the LINSTOR
+    node name (for example when a UUID is used as the Nova host name), set
+    this option to a LINSTOR node property such as ``Aux/openstack-host`` and
+    set that property on every compute node to its Nova host name. The driver
+    then attaches volumes on the node carrying the matching property instead
+    of failing with ``Node '<host>' not found``.

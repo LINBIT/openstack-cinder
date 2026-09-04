@@ -40,6 +40,39 @@ Both ``LinstorDrbdDriver`` and ``LinstorIscsiDriver`` are aliases for the
 unified ``LinstorDriver`` class with the ``linstor_direct`` option set
 appropriately.
 
+Host names
+~~~~~~~~~~
+
+The driver refers to LINSTOR nodes by their LINSTOR node name in two places:
+
+* The node the ``cinder-volume`` service itself runs on. The driver attaches
+  volumes there temporarily, for example to copy an image into a volume, and
+  permanently when a transport such as iSCSI is used. By default the driver
+  uses the ``host`` option of the volume service (without the backend
+  suffix), falling back to the system host name. If neither is the LINSTOR
+  node name, for example because ``cinder-volume`` runs in a container, write
+  the LINSTOR node name into a file and point ``linstor_hostname_file`` at it.
+  The service refuses to start if the resulting name is not a LINSTOR node.
+
+* With direct attach (``LinstorDrbdDriver`` or ``linstor_direct = True``),
+  the compute node a volume is attached to. Nova reports its own ``host``
+  option in the connector, and the driver uses it as the LINSTOR node name.
+  If the Nova host names are not the LINSTOR node names, set
+  ``linstor_connector_host_property`` to the name of a node property, and
+  set that property on every compute node to its Nova host name:
+
+  .. code-block:: console
+
+     $ linstor node set-property compute-1 Aux/openstack-host a30aa14d-56ac-49b6-adcd-f8027baf2da2
+
+  .. code-block:: ini
+
+     linstor_connector_host_property = Aux/openstack-host
+
+  The driver then attaches the volume on the node whose property value
+  matches the connector host, ignoring case. Nodes without the property are
+  still matched by name, so the option can be enabled on an existing cluster.
+
 Volume types and resource groups
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
