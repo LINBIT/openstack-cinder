@@ -83,6 +83,17 @@ linstor_opts = [
                      'cluster. False, if the volume should be attached via '
                      'one of the transports included in Cinder (i.e. ISCSI).'),
 
+    cfg.StrOpt('linstor_connector_host_property',
+               help='Name of a LINSTOR node property, for example '
+                    '"Aux/openstack-host", that holds the host name Nova '
+                    'reports in the connector (the "host" option of '
+                    'nova-compute). Only used with direct attach. Set this '
+                    'if the Nova host names differ from the LINSTOR node '
+                    'names; the driver then attaches the volume on the node '
+                    'whose property value matches the connector host. If '
+                    'unset, or if no node carries a matching property, the '
+                    'connector host is used as the LINSTOR node name.'),
+
     cfg.IntOpt('linstor_timeout',
                default=60,
                help='How long to wait for a response from the Linstor API'),
@@ -160,9 +171,11 @@ class LinstorDriver(driver.VolumeDriver):
           * Support Linstor resource groups via cinder storage pools
           * Support live migration in direct attach mode
           * Limited support for snapshot revert
+        2.1.0 - Added linstor_connector_host_property to map the host name
+          reported by Nova to a LINSTOR node in direct attach mode
     """
 
-    VERSION = '2.0.0'
+    VERSION = '2.1.0'
 
     CI_WIKI_NAME = 'LINBIT_LINSTOR_CI'
 
@@ -229,7 +242,11 @@ class LinstorDriver(driver.VolumeDriver):
             raise LinstorDriverException(msg)
 
         if self._use_direct_connection():
-            self.target_driver = LinstorDirectTarget(self.c, self._force_udev)
+            self.target_driver = LinstorDirectTarget(
+                self.c,
+                self._force_udev,
+                self.configuration.linstor_connector_host_property,
+            )
             self.protocol = self.target_driver.protocol
         else:
             target_driver = self.target_mapping[
@@ -971,15 +988,65 @@ class LinstorDirectTarget(targets.Target):
     # but this way we stay compatible with the v1 drivers
     protocol = constants.DRBD
 
-    def __init__(self, client, force_udev=True, *args, **kwargs):
+    def __init__(self, client, force_udev=True, connector_host_property=None,
+                 *args, **kwargs):
         """Uses Linstor to deploy resources directly on the target host
 
         :param ThreadSafeLinstorClient client: the client wrapper to use
         :param bool force_udev: Assume udev paths always exist.
+        :param str|None connector_host_property: LINSTOR node property used
+         to map connector host names to LINSTOR nodes, or None to use the
+         connector host name as the node name.
         """
         super().__init__(*args, **kwargs)
         self.c = client
         self._force_udev = force_udev
+        self._connector_host_property = connector_host_property
+
+    @wrap_linstor_api_exception
+    def _node_for_connector(self, connector):
+        """Find the LINSTOR node a connector refers to
+
+        Nova fills ``connector['host']`` with the value of its own ``host``
+        option. In most deployments this is the short host name, which is
+        also the name of the LINSTOR node. Some deployments use a different
+        identifier (for example a UUID) as the Nova host name. In that case
+        ``linstor_connector_host_property`` names a node property that
+        holds the Nova host name, and the node carrying that property is
+        used.
+
+        :param dict connector: The connector reported by Nova
+        :return: The name of the LINSTOR node to use
+        :rtype: str
+        :raises LinstorDriverException: if more than one node matches
+        """
+        host = connector['host']
+        prop = self._connector_host_property
+        if not prop:
+            return host
+
+        nodes = self.c.get().node_list_raise()
+        matches = [
+            node.name for node in nodes.nodes
+            if node.props.get(prop, '').lower() == host.lower()
+        ]
+
+        if len(matches) > 1:
+            msg = _('Connector host %(host)s matches multiple LINSTOR '
+                    'nodes via property %(prop)s: %(nodes)s') % {
+                'host': host, 'prop': prop, 'nodes': ', '.join(matches),
+            }
+            LOG.error(msg)
+            raise LinstorDriverException(msg)
+
+        if matches:
+            LOG.debug('Connector host %s maps to LINSTOR node %s via '
+                      'property %s', host, matches[0], prop)
+            return matches[0]
+
+        LOG.debug('No LINSTOR node has property %s=%s, using connector '
+                  'host as node name', prop, host)
+        return host
 
     def ensure_export(self, context, volume, volume_path):
         pass
@@ -1009,7 +1076,8 @@ class LinstorDirectTarget(targets.Target):
             rsc.allow_two_primaries = True
 
         path = _ensure_resource_path(
-            self.c.get(), rsc, connector['host'], self._force_udev,
+            self.c.get(), rsc, self._node_for_connector(connector),
+            self._force_udev,
         )
         return {
             'driver_volume_type': 'local',
@@ -1045,7 +1113,9 @@ class LinstorDirectTarget(targets.Target):
             rsc.allow_two_primaries = False
 
         # This might delete the tiebreaker. Think about a workaround!
-        _deactivate_resource_with_retry(rsc, connector['host'])
+        _deactivate_resource_with_retry(
+            rsc, self._node_for_connector(connector),
+        )
 
 
 @contextlib.contextmanager
