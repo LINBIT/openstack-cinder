@@ -52,6 +52,15 @@ EXISTING_RESOURCE_GROUPS = {
 
 GIB = 1024 * 1024 * 1024
 EXISTING_RESOURCES = {
+    'migrating-volume': {
+        'nodes': {'test-1': False, 'test-3': True, 'test-4': 'tiebreaker'},
+        'in_use': {'test-1'},
+        'resource_group_name': 'cinder-123-456',
+        'volumes': {
+            0: fake_linstor.FakeVolume('/dev/drbd1999', {}, 5 * GIB)
+        },
+        'allow_two_primaries': False,
+    },
     'basic-volume': {
         'nodes': {'test-2': True},
         'resource_group_name': 'cinder-123-456',
@@ -184,19 +193,19 @@ ATTACHED_VOLUME = {
     'volume_attachment': [{'id': 1, 'attached_host': 'test-1'}],
 }
 
-LIVE_MIGRATION_VOLUME = {
-    'name': 'basic-volume',
-    'id': 'basic-volume-00001',
-    'status': 'in-use',
-    'volume_attachment': [{'id': 1, 'attached_host': 'test-1'}],
-}
-
 ATTACHED_LIVE_MIGRATION_VOLUME = {
     'name': 'attached-live-migration-volume',
     'id': 'attached-live-migration-volume-00001',
     'status': 'in-use',
     'volume_attachment': [{'id': 1, 'attached_host': 'test-1'},
                           {'id': 2, 'attached_host': 'test-2'}],
+}
+
+MIGRATING_VOLUME = {
+    'name': 'migrating-volume',
+    'id': 'migrating-volume-00001',
+    'status': 'in-use',
+    'volume_attachment': [{'id': 1, 'attached_host': 'test-1'}],
 }
 
 MULTIATTACH_VOLUME = {
@@ -215,7 +224,7 @@ def make_mock_linstor(controller_version=None):
     resources = copy.deepcopy(EXISTING_RESOURCES)
     resource_groups = copy.deepcopy(EXISTING_RESOURCE_GROUPS)
     controller_version = fake_linstor.ControllerVersion(
-        controller_version or '1.4.1'
+        controller_version or '1.29.1'
     )
     return fake_linstor.FakeLinstorMod(
         KNOWN_NODES, resources, resource_groups, controller_version,
@@ -263,6 +272,31 @@ class LinstorDriverTestCase(test.TestCase):
         self.assertEqual(
             'Aux/openstack-host',
             driver.target_driver._connector_host_property,
+        )
+
+    @mock.patch.object(drv, attribute='linstor',
+                       new=make_mock_linstor(controller_version='1.28.2'))
+    def test_check_for_setup_error_rest_version_no_unmake_available(self):
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(configuration=conf, host='test-1')
+        self.assertRaisesRegex(
+            drv.LinstorDriverException,
+            r'Linstor API not supported: \(1, 28, 2\) < \(1, 29, 0\)',
+            driver.check_for_setup_error,
+        )
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_check_for_setup_error_no_unmake_available(self):
+        unmake = fake_linstor.MultiLinstor.resource_unmake_available
+        delattr(fake_linstor.MultiLinstor, 'resource_unmake_available')
+        self.addCleanup(setattr, fake_linstor.MultiLinstor,
+                        'resource_unmake_available', unmake)
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(configuration=conf, host='test-1')
+        self.assertRaisesRegex(
+            drv.LinstorDriverException,
+            r'Package python-linstor does not support unmake-available',
+            driver.check_for_setup_error,
         )
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
@@ -612,23 +646,6 @@ class LinstorDirectTargetTestCase(test.TestCase):
         self.assertIn('test-1', drv.linstor.resources['basic-volume']['nodes'])
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
-    def test_initialize_live_migration(self):
-        connector = {'host': 'test-2'}
-        target_helper = drv.LinstorDirectTarget(
-            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
-        )
-        actual = target_helper.initialize_connection(
-            LIVE_MIGRATION_VOLUME,
-            connector,
-        )
-        expected = {'data': {'device_path': '/dev/drbd/by-res/basic-volume/0'},
-                    'driver_volume_type': 'local'}
-        self.assertEqual(expected, actual)
-        self.assertTrue(drv.linstor.resources['basic-volume']
-                        ['allow_two_primaries'])
-        self.assertIn('test-2', drv.linstor.resources['basic-volume']['nodes'])
-
-    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
     def test_initialize_connection_unknown_host(self):
         connector = {'host': 'unknown-host'}
         target_helper = drv.LinstorDirectTarget(
@@ -800,6 +817,144 @@ class LinstorDirectTargetTestCase(test.TestCase):
         )
         target_helper.initialize_connection(BASIC_VOLUME, connector)
         self.assertIn('test-2', drv.linstor.resources['basic-volume']['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_not_in_use(self):
+        # Not in use anywhere: a plain make-available
+        connector = {'host': 'test-1'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        actual = target_helper.initialize_connection(BASIC_VOLUME, connector)
+        expected = {
+            'data': {'device_path': '/dev/drbd/by-res/basic-volume/0'},
+            'driver_volume_type': 'local'
+        }
+        self.assertEqual(expected, actual)
+        rsc = drv.linstor.resources['basic-volume']
+        self.assertIn('test-1', rsc['nodes'])
+        self.assertFalse(rsc['allow_two_primaries'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_live_migration(self):
+        # In use on test-1: LINSTOR opens the dual-primary window to test-2
+        connector = {'host': 'test-2'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        actual = target_helper.initialize_connection(
+            MIGRATING_VOLUME, connector,
+        )
+        expected = {
+            'data': {'device_path': '/dev/drbd/by-res/migrating-volume/0'},
+            'driver_volume_type': 'local'
+        }
+        self.assertEqual(expected, actual)
+        rsc = drv.linstor.resources['migrating-volume']
+        self.assertIn('test-2', rsc['nodes'])
+        self.assertTrue(rsc['allow_two_primaries'])
+        self.assertEqual(('test-1', 'test-2'), rsc['live_migration'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_error(self):
+        connector = {'host': 'test-2'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        error = fake_linstor.FakeApiCallResponse('Refused', error=True)
+        with mock.patch.object(fake_linstor.MultiLinstor,
+                               'resource_make_available',
+                               return_value=[error]):
+            self.assertRaises(
+                exception.VolumeBackendAPIException,
+                target_helper.initialize_connection,
+                MIGRATING_VOLUME,
+                connector,
+            )
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_terminate_connection_live_migration_source(self):
+        # Migration finished: the source is no longer in use, its diskless
+        # resource goes away together with the dual-primary window
+        rsc = drv.linstor.resources['migrating-volume']
+        rsc['nodes']['test-2'] = False
+        rsc['in_use'] = {'test-2'}
+        rsc['allow_two_primaries'] = True
+        connector = {'host': 'test-1'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.terminate_connection(MIGRATING_VOLUME, connector)
+        self.assertNotIn('test-1', rsc['nodes'])
+        self.assertIn('test-2', rsc['nodes'])
+        self.assertFalse(rsc['allow_two_primaries'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_terminate_connection_keeps_replicas(self):
+        # Diskful replicas and tiebreakers stay in place
+        rsc = drv.linstor.resources['migrating-volume']
+        rsc['in_use'] = set()
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        for host in ('test-3', 'test-4'):
+            target_helper.terminate_connection(
+                MIGRATING_VOLUME, {'host': host},
+            )
+        self.assertEqual(
+            {'test-1': False, 'test-3': True, 'test-4': 'tiebreaker'},
+            rsc['nodes'],
+        )
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_terminate_connection_not_deployed(self):
+        # Not deployed on the node: a successful no-op
+        rsc = drv.linstor.resources['migrating-volume']
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.terminate_connection(
+            MIGRATING_VOLUME, {'host': 'test-2'},
+        )
+        self.assertEqual(
+            {'test-1': False, 'test-3': True, 'test-4': 'tiebreaker'},
+            rsc['nodes'],
+        )
+
+    @mock.patch('time.sleep')
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_terminate_connection_in_use(self, _sleep):
+        # Still in use on the node: LINSTOR refuses, the driver gives up
+        # after retrying
+        rsc = drv.linstor.resources['migrating-volume']
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        self.assertRaises(
+            exception.VolumeBackendAPIException,
+            target_helper.terminate_connection,
+            MIGRATING_VOLUME,
+            {'host': 'test-1'},
+        )
+        self.assertIn('test-1', rsc['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_terminate_connection_force_unknown_host(self):
+        # Force detach: best-effort unmake-available on every attached host,
+        # hosts that cannot be resolved are skipped
+        rsc = drv.linstor.resources['migrating-volume']
+        rsc['in_use'] = set()
+        rsc['allow_two_primaries'] = True
+        volume = dict(MIGRATING_VOLUME, volume_attachment=[
+            {'id': 1, 'attached_host': 'test-1'},
+            {'id': 2, 'attached_host': 'unknown-host'},
+        ])
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.terminate_connection(volume, None)
+        self.assertNotIn('test-1', rsc['nodes'])
+        self.assertFalse(rsc['allow_two_primaries'])
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
     def test_terminate_connection_by_address(self):
@@ -994,7 +1149,7 @@ class LinstorUtilsTestCase(test.TestCase):
         try:
             with drv._temp_resource_path(client, rsc, 'unknown-host'):
                 pass
-        except drv.linstor.LinstorError:
+        except exception.VolumeBackendAPIException:
             pass
         else:
             self.fail("local path on unknown host should fail")
