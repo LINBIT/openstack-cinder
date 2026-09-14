@@ -42,6 +42,18 @@ FakeSnapshot = collections.namedtuple(
 FakeSnapshotList = collections.namedtuple('FakeSnapshotList', ('snapshots',))
 
 
+class FakeApiCallResponse(object):
+    def __init__(self, message, error=False):
+        self.message = message
+        self.error = error
+
+    def is_error(self):
+        return self.error
+
+    def __str__(self):
+        return self.message
+
+
 class FakeVolume(object):
     def __init__(self, device_path, properties, size):
         self.device_path = device_path
@@ -85,6 +97,55 @@ class MultiLinstor(object):
 
     def controller_version(self):
         return self.__version
+
+    @classmethod
+    def all_api_responses_no_error(cls, replies):
+        return all(not r.is_error() for r in replies)
+
+    def resource_make_available(self, node_name, rsc_name, diskful=False,
+                                layer_list=None, drbd_tcp_ports=None,
+                                auto_manage_dual_primary=False):
+        if node_name not in self.__nodes:
+            return [FakeApiCallResponse(
+                'Node %s not found' % node_name, error=True,
+            )]
+        rsc = self.__resources.get(rsc_name)
+        if rsc is None:
+            return [FakeApiCallResponse(
+                'Resource definition %s not found' % rsc_name, error=True,
+            )]
+        # in_use models the nodes the resource is DRBD primary on
+        sources = sorted(rsc.get('in_use', set()) - {node_name})
+        if auto_manage_dual_primary and sources:
+            rsc['allow_two_primaries'] = True
+            rsc['live_migration'] = (sources[0], node_name)
+        rsc['nodes'].setdefault(node_name, False)
+        return [FakeApiCallResponse(
+            'Resource %s available on %s' % (rsc_name, node_name),
+        )]
+
+    def resource_unmake_available(self, node_name, rsc_name):
+        if node_name not in self.__nodes:
+            return [FakeApiCallResponse(
+                'Node %s not found' % node_name, error=True,
+            )]
+        rsc = self.__resources.get(rsc_name)
+        if rsc is None or node_name not in rsc['nodes']:
+            return [FakeApiCallResponse('Nothing to do')]
+        if node_name in rsc.get('in_use', set()):
+            return [FakeApiCallResponse(
+                'Resource %s is in use on %s' % (rsc_name, node_name),
+                error=True,
+            )]
+        # False is a plain diskless resource; diskful (True) and tiebreaker
+        # resources are kept
+        if rsc['nodes'][node_name] is False:
+            del rsc['nodes'][node_name]
+        rsc['allow_two_primaries'] = False
+        rsc.pop('live_migration', None)
+        return [FakeApiCallResponse(
+            'Resource %s no longer available on %s' % (rsc_name, node_name),
+        )]
 
     def node_list_raise(self, filter_by_nodes=None, filter_by_props=None):
         if filter_by_props:
@@ -190,22 +251,6 @@ class Resource(object):
     @property
     def resource_group_name(self):
         return self.existing.get('resource_group_name', 'DfltRscGrp')
-
-    def activate(self, nodename):
-        if nodename not in self.__nodes:
-            raise LinstorError()
-        if nodename in self.existing['nodes']:
-            return
-        if self.name not in self.__resources:
-            self.__resources[self.name] = self.existing
-        self.existing['nodes'][nodename] = False
-
-    def deactivate(self, nodename):
-        if nodename not in self.__nodes:
-            raise LinstorError()
-        if self.existing['nodes'].get(nodename, True):
-            return
-        del self.existing['nodes'][nodename]
 
     @property
     def allow_two_primaries(self):
