@@ -47,19 +47,41 @@ The driver refers to LINSTOR nodes by their LINSTOR node name in two places:
 
 * The node the ``cinder-volume`` service itself runs on. The driver attaches
   volumes there temporarily, for example to copy an image into a volume, and
-  permanently when a transport such as iSCSI is used. By default the driver
-  uses the ``host`` option of the volume service (without the backend
-  suffix), falling back to the system host name. If neither is the LINSTOR
-  node name, for example because ``cinder-volume`` runs in a container, write
-  the LINSTOR node name into a file and point ``linstor_hostname_file`` at it.
-  The service refuses to start if the resulting name is not a LINSTOR node.
+  permanently when a transport such as iSCSI is used. The driver looks the
+  node up by the ``host`` option of the volume service (without the backend
+  suffix) and by the system host name, each first as node name and then as
+  the host name the satellite reported (see below), and finally by a network
+  interface on the ``my_ip`` option. If none of these finds the node, for
+  example because ``cinder-volume`` runs in a container, write the LINSTOR
+  node name into a file and point ``linstor_hostname_file`` at it; the file
+  then replaces all lookups. The service refuses to start if no node is
+  found.
 
 * With direct attach (``LinstorDrbdDriver`` or ``linstor_direct = True``),
   the compute node a volume is attached to. Nova reports its own ``host``
-  option in the connector, and the driver uses it as the LINSTOR node name.
-  If the Nova host names are not the LINSTOR node names, set
-  ``linstor_connector_host_property`` to the name of a node property, and
-  set that property on every compute node to its Nova host name:
+  option in the connector, and the driver resolves it to a LINSTOR node by
+  trying these lookups in order until exactly one node matches:
+
+  #. the node whose property named by ``linstor_connector_host_property``
+     equals the connector host, if that option is set,
+  #. the node with the connector host as its name,
+  #. the node whose satellite reported the connector host as its host name
+     (``uname -n``, stored by LINSTOR in the node property ``NodeUname``),
+  #. the node with a network interface on the IP address Nova reports in
+     the connector (its ``my_block_storage_ip`` option, which defaults to
+     ``my_ip``).
+
+  Host names are compared ignoring case. A lookup that matches more than one
+  node is an error, as is a connector that matches no node at all.
+
+  The name and host name lookups cover deployments where the Nova host name
+  is either the LINSTOR node name or the host name of the compute node. The
+  address lookup covers deployments that use an unrelated identifier, such
+  as a UUID, as the Nova host name; it requires the Nova block storage IP
+  address to be one of the node's LINSTOR network interfaces. Where that is
+  not the case, set ``linstor_connector_host_property`` to the name of a
+  node property, and set that property on every compute node to its Nova
+  host name:
 
   .. code-block:: console
 
@@ -68,10 +90,6 @@ The driver refers to LINSTOR nodes by their LINSTOR node name in two places:
   .. code-block:: ini
 
      linstor_connector_host_property = Aux/openstack-host
-
-  The driver then attaches the volume on the node whose property value
-  matches the connector host, ignoring case. Nodes without the property are
-  still matched by name, so the option can be enabled on an existing cluster.
 
 Volume types and resource groups
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

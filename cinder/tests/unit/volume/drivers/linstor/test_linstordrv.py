@@ -18,13 +18,24 @@ from cinder.tests.unit.volume.drivers.linstor import fake_linstor
 from cinder.volume import configuration
 from cinder.volume.drivers import linstordrv as drv
 
-# LINSTOR node name -> node properties
+# LINSTOR node name -> node properties and network interface addresses
 KNOWN_NODES = {
     'test-1': {},
     'test-2': {},
-    'test-3': {'Aux/openstack-host': 'a30aa14d-56ac-49b6-adcd-f8027baf2da2'},
-    'test-4': {'Aux/openstack-host': 'duplicate-host'},
-    'test-5': {'Aux/openstack-host': 'duplicate-host'},
+    'test-3': {
+        'props': {
+            'Aux/openstack-host': 'a30aa14d-56ac-49b6-adcd-f8027baf2da2',
+        },
+    },
+    'test-4': {'props': {'Aux/openstack-host': 'duplicate-host'}},
+    'test-5': {'props': {'Aux/openstack-host': 'duplicate-host'}},
+    'test-6': {
+        'props': {'NodeUname': 'compute-6.example.com'},
+        'addresses': ['192.0.2.6', '2001:db8::6'],
+    },
+    'test-7': {'addresses': ['192.0.2.77']},
+    'test-8': {'addresses': ['192.0.2.77']},
+    'test-9': {'props': {'Aux/openstack-host': 'test-1'}},
 }
 
 BASIC_VOLUME_PROPS = {
@@ -252,6 +263,83 @@ class LinstorDriverTestCase(test.TestCase):
         self.assertEqual(
             'Aux/openstack-host',
             driver.target_driver._connector_host_property,
+        )
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_check_for_setup_error_host_reported_host_name(self):
+        # The Cinder host is not a node name, but a satellite reported it as
+        # its host name; the backend suffix is ignored
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(
+            configuration=conf, host='compute-6.example.com@linstor',
+        )
+        driver.check_for_setup_error()
+        self.assertEqual('test-6', driver._hostname)
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    @mock.patch.object(drv.socket, 'gethostname',
+                       return_value='COMPUTE-6.example.com')
+    def test_check_for_setup_error_system_host_name(self, _gethostname):
+        # Neither the Cinder host nor the system host name is a node name,
+        # but a satellite reported the system host name (case does not
+        # matter)
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(
+            configuration=conf, host='fea4e49b-b215-470c-83ae-e89d6f3e0996',
+        )
+        driver.check_for_setup_error()
+        self.assertEqual('test-6', driver._hostname)
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_check_for_setup_error_host_by_address(self):
+        # Cinder host unrelated to LINSTOR, but my_ip is a LINSTOR network
+        # interface of a node
+        self.flags(my_ip='192.0.2.6')
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(
+            configuration=conf, host='fea4e49b-b215-470c-83ae-e89d6f3e0996',
+        )
+        driver.check_for_setup_error()
+        self.assertEqual('test-6', driver._hostname)
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_check_for_setup_error_unknown_host(self):
+        self.flags(my_ip='198.51.100.1')
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(
+            configuration=conf, host='fea4e49b-b215-470c-83ae-e89d6f3e0996',
+        )
+        self.assertRaisesRegex(
+            drv.LinstorDriverException,
+            r'Cinder host fea4e49b-b215-470c-83ae-e89d6f3e0996 matches no '
+            r'LINSTOR node',
+            driver.check_for_setup_error,
+        )
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    @mock.patch.object(drv, 'open', create=True,
+                       new=mock.mock_open(read_data='test-2\n'))
+    def test_check_for_setup_error_hostname_file(self):
+        # The hostname file wins over a node named like the Cinder host
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(configuration=conf, host='test-1')
+        self.flags(linstor_hostname_file='/etc/cinder/linstor-node')
+        driver.check_for_setup_error()
+        self.assertEqual('test-2', driver._hostname)
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    @mock.patch.object(drv, 'open', create=True,
+                       new=mock.mock_open(read_data='unknown-node\n'))
+    def test_check_for_setup_error_hostname_file_unknown(self):
+        # An explicitly configured node name is not replaced by lookups
+        self.flags(my_ip='192.0.2.6')
+        conf = configuration.Configuration(None)
+        driver = drv.LinstorDriver(configuration=conf, host='test-1')
+        self.flags(linstor_hostname_file='/etc/cinder/linstor-node')
+        self.assertRaisesRegex(
+            drv.LinstorDriverException,
+            r'Cinder host unknown-node matches no LINSTOR node',
+            driver.check_for_setup_error,
         )
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
@@ -573,14 +661,27 @@ class LinstorDirectTargetTestCase(test.TestCase):
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
     def test_initialize_connection_mapped_host_fallback(self):
         # Property configured, but no node carries it for this host: the
-        # connector host is used as node name, like without the option
+        # node named like the connector host is used, like without the option
+        connector = {'host': 'test-2'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+            connector_host_property='Aux/openstack-host',
+        )
+        target_helper.initialize_connection(BASIC_VOLUME, connector)
+        self.assertIn('test-2', drv.linstor.resources['basic-volume']['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_mapped_host_precedes_name(self):
+        # The configured property wins over a node named like the host
         connector = {'host': 'test-1'}
         target_helper = drv.LinstorDirectTarget(
             fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
             connector_host_property='Aux/openstack-host',
         )
         target_helper.initialize_connection(BASIC_VOLUME, connector)
-        self.assertIn('test-1', drv.linstor.resources['basic-volume']['nodes'])
+        nodes = drv.linstor.resources['basic-volume']['nodes']
+        self.assertIn('test-9', nodes)
+        self.assertNotIn('test-1', nodes)
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
     def test_initialize_connection_mapped_host_ambiguous(self):
@@ -614,6 +715,102 @@ class LinstorDirectTargetTestCase(test.TestCase):
             target_helper.initialize_connection,
             BASIC_VOLUME,
             connector,
+        )
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_name_case_insensitive(self):
+        # LINSTOR node names are case-insensitive, the driver must use the
+        # name as known to LINSTOR
+        connector = {'host': 'TEST-2'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.initialize_connection(BASIC_VOLUME, connector)
+        self.assertIn('test-2', drv.linstor.resources['basic-volume']['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_reported_host_name(self):
+        # No node is named like the connector host, but a satellite reported
+        # it as its host name (case does not matter)
+        connector = {'host': 'COMPUTE-6.example.com', 'ip': '198.51.100.1'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.initialize_connection(BASIC_VOLUME, connector)
+        self.assertIn('test-6', drv.linstor.resources['basic-volume']['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_by_address(self):
+        # Nova host name unrelated to LINSTOR, but the connector IP is a
+        # LINSTOR network interface of a node
+        connector = {
+            'host': 'a30aa14d-56ac-49b6-adcd-f8027baf2da2', 'ip': '192.0.2.6',
+        }
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.initialize_connection(BASIC_VOLUME, connector)
+        self.assertIn('test-6', drv.linstor.resources['basic-volume']['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_by_ipv6_address(self):
+        # Addresses are compared as IP addresses, not as strings
+        connector = {'host': 'unknown-host', 'ip': '2001:DB8:0:0:0:0:0:6'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.initialize_connection(BASIC_VOLUME, connector)
+        self.assertIn('test-6', drv.linstor.resources['basic-volume']['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_by_address_ambiguous(self):
+        connector = {'host': 'unknown-host', 'ip': '192.0.2.77'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        self.assertRaises(
+            drv.LinstorDriverException,
+            target_helper.initialize_connection,
+            BASIC_VOLUME,
+            connector,
+        )
+        nodes = drv.linstor.resources['basic-volume']['nodes']
+        self.assertNotIn('test-7', nodes)
+        self.assertNotIn('test-8', nodes)
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_unknown_host_and_address(self):
+        connector = {'host': 'unknown-host', 'ip': '198.51.100.1'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        self.assertRaises(
+            drv.LinstorDriverException,
+            target_helper.initialize_connection,
+            BASIC_VOLUME,
+            connector,
+        )
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_initialize_connection_invalid_address(self):
+        # A connector IP that is not an IP address is ignored
+        connector = {'host': 'test-2', 'ip': 'not-an-address'}
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.initialize_connection(BASIC_VOLUME, connector)
+        self.assertIn('test-2', drv.linstor.resources['basic-volume']['nodes'])
+
+    @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
+    def test_terminate_connection_by_address(self):
+        connector = {'host': 'unknown-host', 'ip': '192.0.2.6'}
+        drv.linstor.resources['attached-volume']['nodes']['test-6'] = False
+        target_helper = drv.LinstorDirectTarget(
+            fake_linstor.FakeLinstorClientGetter(drv.linstor.MultiLinstor([])),
+        )
+        target_helper.terminate_connection(ATTACHED_VOLUME, connector)
+        self.assertNotIn(
+            'test-6', drv.linstor.resources['attached-volume']['nodes']
         )
 
     @mock.patch.object(drv, attribute='linstor', new=make_mock_linstor())
