@@ -107,8 +107,9 @@ class PosixBackupDriverTestCase(test.TestCase):
     def test_put_container_disabled(self):
         container = f"{FAKE_CONTAINER}_new"
         self.override_config('backup_create_containers', False)
+        driver = posix.PosixBackupDriver(self.ctxt)
 
-        self.assertRaises(OSError, self.driver.put_container, container)
+        self.assertRaises(OSError, driver.put_container, container)
 
     def test_put_container_already_exists(self):
         self.mock_object(os.path, 'exists', return_value=True)
