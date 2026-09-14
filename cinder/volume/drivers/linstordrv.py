@@ -119,6 +119,10 @@ LOG = logging.getLogger(__name__)  # type: logging.logging.Logger
 # satellite reports when it connects.
 NODE_UNAME_PROPERTY = 'NodeUname'
 
+# Least REST API version (LINSTOR 1.35) with make-available managing the
+# dual-primary window of a live migration, and with unmake-available.
+MIN_REST_VERSION = (1, 29, 0)
+
 CONF = cfg.CONF
 CONF.register_opts(linstor_opts, group=configuration.SHARED_CONF_GROUP)
 
@@ -188,6 +192,9 @@ class LinstorDriver(driver.VolumeDriver):
             reported by Nova to a LINSTOR node in direct attach mode
           * Find the LINSTOR nodes of the Cinder host and of connectors also
             by the reported satellite host name and by IP address
+          * Require LINSTOR 1.35; attach with make-available and detach with
+            unmake-available, letting LINSTOR manage the dual-primary window
+            of live migrations and keep tiebreakers
     """
 
     VERSION = '2.1.0'
@@ -242,13 +249,19 @@ class LinstorDriver(driver.VolumeDriver):
                     'to Resource class, please update')
             raise LinstorDriverException(msg)
 
+        if not hasattr(self.c.get(), 'resource_unmake_available'):
+            msg = _('Package python-linstor does not support '
+                    'unmake-available, please update to 1.29.0 or later')
+            raise LinstorDriverException(msg)
+
         with self.c.get() as client:
             version_str = client.controller_version().rest_api_version
 
         rest_version = tuple(int(n) for n in version_str.split("."))
-        if rest_version < (1, 4, 0):
-            msg = _('Linstor API not supported: %s < (1, 4, 0)') \
-                % str(rest_version)
+        if rest_version < MIN_REST_VERSION:
+            msg = _('Linstor API not supported: %(actual)s < %(min)s') % {
+                'actual': str(rest_version), 'min': str(MIN_REST_VERSION),
+            }
             raise LinstorDriverException(msg)
 
         self._local_node = self._find_local_node()
@@ -958,7 +971,9 @@ class LinstorDriver(driver.VolumeDriver):
                     volume['name'],
                     volume['id'],
                 )
-                _deactivate_resource_with_retry(rsc, self._hostname)
+                _unmake_available_with_retry(
+                    self.c.get(), rsc, self._hostname,
+                )
             except LinstorVolumeNotFoundException:
                 pass
 
@@ -1082,22 +1097,22 @@ class LinstorDirectTarget(targets.Target):
 
         This target-driver ensures a replica of the request volume is available
         locally on the connection target.
+
+        During a live migration the volume is attached on the destination
+        host while still in use on the source host, so both have to be DRBD
+        primary until the migration completes. make-available with
+        ``auto_manage_dual_primary`` lets LINSTOR open that dual-primary
+        window, and unmake-available in :meth:`terminate_connection` closes
+        it.
         """
         rsc = _get_existing_resource(
             self.c.get(),
             volume['name'],
             volume['id']
         )
-
-        if connector['host'] not in _attached_on(volume):
-            LOG.debug('Trying to attach to a volume in use, looks like live '
-                      'migration. Setting "allow_two_primaries=True"')
-            rsc.allow_two_primaries = True
-
-        path = _ensure_resource_path(
-            self.c.get(), rsc, self._node_for_connector(connector),
-            self._force_udev,
-        )
+        node = self._node_for_connector(connector)
+        _make_available(self.c.get(), rsc, node, auto_manage_dual_primary=True)
+        path = _resource_path(self.c.get(), rsc, node, self._force_udev)
         return {
             'driver_volume_type': 'local',
             'data': {'device_path': path},
@@ -1119,22 +1134,40 @@ class LinstorDirectTarget(targets.Target):
         )
 
         if connector is None:
-            LOG.debug('force detach of volume, no clever deactivating of '
-                      'resources required')
-            # Since we detach everything we can also reset this
-            rsc.allow_two_primaries = False
+            LOG.debug('force detach of volume, reverting make-available on '
+                      'all attached hosts')
+            self._unmake_available_everywhere(rsc, volume)
             return
 
-        if volume['status'] == 'in-use' and \
-                any(x != connector['host'] for x in _attached_on(volume)):
-            LOG.debug('Trying to detach from a volume in use, looks like live '
-                      'migration. Resetting "allow_two_primaries=False"')
-            rsc.allow_two_primaries = False
-
-        # This might delete the tiebreaker. Think about a workaround!
-        _deactivate_resource_with_retry(
-            rsc, self._node_for_connector(connector),
+        # Closes the dual-primary window, keeps diskful replicas and
+        # tiebreakers in place
+        _unmake_available_with_retry(
+            self.c.get(), rsc, self._node_for_connector(connector),
         )
+
+    def _unmake_available_everywhere(self, rsc, volume):
+        """Revert make-available on every host the volume is attached to
+
+        Used on force detach, where no connector is given. Failures are
+        logged, not raised: the hosts may be unreachable, and the next
+        unmake-available of the resource cleans up whatever is left.
+
+        :param linstor.Resource rsc: The resource of the volume
+        :param volume: The volume being detached, with its attachments
+        """
+        for attachment in volume['volume_attachment']:
+            connector = attachment.get('connector') or {
+                'host': attachment['attached_host'],
+            }
+            try:
+                _unmake_available_with_retry(
+                    self.c.get(), rsc, self._node_for_connector(connector),
+                )
+            except (exception.CinderException, linstor.LinstorError) as e:
+                LOG.warning('Could not revert make-available of %(rsc)s for '
+                            'host %(host)s: %(error)s',
+                            {'rsc': rsc.name, 'host': connector['host'],
+                             'error': e})
 
 
 @contextlib.contextmanager
@@ -1149,15 +1182,20 @@ def _temp_resource_path(linstor_client, rsc, host, force_udev=True):
     :return: The path to the temporary device
     :rtype: str
     """
+    path = _ensure_resource_path(linstor_client, rsc, host, force_udev)
     try:
-        yield _ensure_resource_path(linstor_client, rsc, host, force_udev)
+        yield path
     finally:
-        _deactivate_resource_with_retry(rsc, host)
+        _unmake_available_with_retry(linstor_client, rsc, host)
 
 
 @wrap_linstor_api_exception
 def _ensure_resource_path(linstor_client, rsc, host, force_udev=True):
     """Ensure a resource is deployed on a host and return its device path
+
+    This is for the Cinder host itself, so the resource is made available
+    without preparing a live migration: a volume in use on a compute node
+    must not become primary on the Cinder host as well.
 
     :param linstor.Linstor linstor_client: Client used for API calls
     :param linstor.Resource rsc: The resource to deploy on the node
@@ -1166,7 +1204,21 @@ def _ensure_resource_path(linstor_client, rsc, host, force_udev=True):
     :return: The path to the deployed node
     :rtype: str
     """
-    rsc.activate(host)
+    _make_available(linstor_client, rsc, host)
+    return _resource_path(linstor_client, rsc, host, force_udev)
+
+
+@wrap_linstor_api_exception
+def _resource_path(linstor_client, rsc, host, force_udev=True):
+    """Get the device path of a resource deployed on a host
+
+    :param linstor.Linstor linstor_client: Client used for API calls
+    :param linstor.Resource rsc: The deployed resource
+    :param str host: The host as named in Linstor
+    :param bool force_udev: Assume udev paths always exist.
+    :return: The path to the device
+    :rtype: str
+    """
     symlink = _find_symlink_to_device(linstor_client, rsc.name, host)
     if symlink:
         return symlink
@@ -1176,9 +1228,62 @@ def _ensure_resource_path(linstor_client, rsc, host, force_udev=True):
     return rsc.volumes[0].device_path
 
 
+def _make_available(linstor_client, rsc, node, auto_manage_dual_primary=False):
+    """Make a resource available on a node
+
+    A diskless resource is created unless the resource is already deployed
+    on the node. With ``auto_manage_dual_primary``, a resource in use on
+    another node is prepared for a live migration to this node: LINSTOR sets
+    the DRBD options that let both nodes be primary at once
+    (allow-two-primaries, protocol C) until
+    :func:`_unmake_available_with_retry` on the source reverts them. Only
+    set it for connectors; a temporary attach on the Cinder host is never a
+    migration.
+
+    :param linstor.Linstor linstor_client: Client used for API calls
+    :param linstor.Resource rsc: The resource to make available
+    :param str node: The node as named in LINSTOR
+    :param bool auto_manage_dual_primary: Prepare a live migration if the
+     resource is in use on another node
+    :raises linstor.LinstorError: if LINSTOR reports an error
+    """
+    responses = linstor_client.resource_make_available(
+        node, rsc.name, auto_manage_dual_primary=auto_manage_dual_primary,
+    )
+    _raise_on_error(
+        linstor_client, responses,
+        'Could not make resource %s available on node %s' % (rsc.name, node),
+    )
+
+
 @utils.retry(linstor.LinstorError if linstor else Exception)
-def _deactivate_resource_with_retry(rsc, host):
-    rsc.deactivate(host)
+def _unmake_available_with_retry(linstor_client, rsc, node):
+    """Revert make-available of a resource on a node
+
+    LINSTOR deletes the resource if it is diskless and not a tiebreaker,
+    keeps it otherwise, and reverts the DRBD options a make-available set for
+    a live migration. A resource still in use on the node is refused, hence
+    the retry: Nova may not have released the device yet.
+
+    :param linstor.Linstor linstor_client: Client used for API calls
+    :param linstor.Resource rsc: The resource to revert
+    :param str node: The node as named in LINSTOR
+    :raises linstor.LinstorError: if LINSTOR reports an error
+    """
+    responses = linstor_client.resource_unmake_available(node, rsc.name)
+    _raise_on_error(
+        linstor_client, responses,
+        'Could not revert make-available of resource %s on node %s'
+        % (rsc.name, node),
+    )
+
+
+def _raise_on_error(linstor_client, responses, what):
+    """Raise a LinstorError if any API response reports an error"""
+    if not linstor_client.all_api_responses_no_error(responses):
+        raise linstor.LinstorError(
+            '%s: %s' % (what, '; '.join(str(r) for r in responses))
+        )
 
 
 def _get_existing_resource(linstor_client, volume_name, volume_id):
@@ -1394,17 +1499,6 @@ def _node_addresses(node):
             LOG.debug('Ignoring address %r of node %s interface %s, not an '
                       'IP address', netif.address, node.name, netif.name)
     return addresses
-
-
-def _attached_on(volume):
-    """Checks if the volume is attached on another host
-
-    :param volume cinder.objects.volume.Volume: the current volume state
-    :returns: The list of hosts this is currently attached at
-    :rtype: list[str]
-    """
-    return [attachment['attached_host']
-            for attachment in volume['volume_attachment']]
 
 
 class LinstorDriverException(exception.VolumeDriverException):
