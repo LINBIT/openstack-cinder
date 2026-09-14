@@ -17,7 +17,12 @@ from cinder.volume.drivers import linstordrv as drv
 ControllerVersion = collections.namedtuple(
     'ControllerVersion', ('rest_api_version',)
 )
-FakeNode = collections.namedtuple('FakeNode', ('name', 'props'))
+FakeNetInterface = collections.namedtuple(
+    'FakeNetInterface', ('name', 'address')
+)
+FakeNode = collections.namedtuple(
+    'FakeNode', ('name', 'props', 'net_interfaces')
+)
 FakeNodeList = collections.namedtuple('FakeNodeList', ('nodes',))
 FakeVolumeList = collections.namedtuple('FakeVolumeList', ('resources',))
 FakeResource = collections.namedtuple('FakeResource', ('volumes',))
@@ -51,9 +56,21 @@ class FakeVolume(object):
             and self.size == other.size
 
 
+def _fake_node(name, spec):
+    return FakeNode(
+        name,
+        spec.get('props', {}),
+        [
+            FakeNetInterface('nic%d' % i, address)
+            for i, address in enumerate(spec.get('addresses', []))
+        ],
+    )
+
+
 class MultiLinstor(object):
     def __init__(self, nodes, resources, version, uri_list, timeout=None):
-        # nodes is either a set of names or a dict mapping names to props
+        # nodes is either a set of names or a dict mapping names to a dict
+        # with optional 'props' and 'addresses' entries
         self.__nodes = nodes
         self.__resources = resources
         self.__version = version
@@ -72,9 +89,9 @@ class MultiLinstor(object):
     def node_list_raise(self, filter_by_nodes=None, filter_by_props=None):
         if filter_by_props:
             raise NotImplementedError()
-        props = self.__nodes if isinstance(self.__nodes, dict) else {}
+        specs = self.__nodes if isinstance(self.__nodes, dict) else {}
         return FakeNodeList([
-            FakeNode(node, props.get(node, {}))
+            _fake_node(node, specs.get(node, {}))
             for node in sorted(self.__nodes)
             if not filter_by_nodes or node in filter_by_nodes
         ])

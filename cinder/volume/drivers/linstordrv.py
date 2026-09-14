@@ -20,6 +20,7 @@ for more details.
 """
 import contextlib
 import functools
+import ipaddress
 import socket
 
 from eventlet.green import threading
@@ -54,8 +55,13 @@ linstor_opts = [
                      'deployment.'),
 
     cfg.StrOpt('linstor_hostname_file',
-               help='Path to a file containing the name of the Satellite '
-                    'this service is running on.'),
+               help='Path to a file containing the name of the LINSTOR node '
+                    'this service is running on. If unset, the driver looks '
+                    'for a node named like the "host" option of this '
+                    'service or like the system host name, then for a node '
+                    'whose satellite reported one of those as its host '
+                    'name, and finally for a node with a network interface '
+                    'on the "my_ip" option.'),
 
     cfg.StrOpt('linstor_client_key',
                help='Path to the PEM encoded private key used for HTTPS '
@@ -87,12 +93,14 @@ linstor_opts = [
                help='Name of a LINSTOR node property, for example '
                     '"Aux/openstack-host", that holds the host name Nova '
                     'reports in the connector (the "host" option of '
-                    'nova-compute). Only used with direct attach. Set this '
-                    'if the Nova host names differ from the LINSTOR node '
-                    'names; the driver then attaches the volume on the node '
-                    'whose property value matches the connector host. If '
-                    'unset, or if no node carries a matching property, the '
-                    'connector host is used as the LINSTOR node name.'),
+                    'nova-compute). Only used with direct attach. The '
+                    'driver attaches a volume on the node whose property '
+                    'value matches the connector host. If unset, or if no '
+                    'node has a matching property, the driver looks for a '
+                    'node named like the connector host, then for a node '
+                    'whose satellite reported the connector host as its '
+                    'host name, and finally for a node with a network '
+                    'interface on the IP address in the connector.'),
 
     cfg.IntOpt('linstor_timeout',
                default=60,
@@ -106,6 +114,10 @@ linstor_opts = [
 ]
 
 LOG = logging.getLogger(__name__)  # type: logging.logging.Logger
+
+# Node property the controller fills with the host name (uname -n) a
+# satellite reports when it connects.
+NODE_UNAME_PROPERTY = 'NodeUname'
 
 CONF = cfg.CONF
 CONF.register_opts(linstor_opts, group=configuration.SHARED_CONF_GROUP)
@@ -171,8 +183,11 @@ class LinstorDriver(driver.VolumeDriver):
           * Support Linstor resource groups via cinder storage pools
           * Support live migration in direct attach mode
           * Limited support for snapshot revert
-        2.1.0 - Added linstor_connector_host_property to map the host name
-          reported by Nova to a LINSTOR node in direct attach mode
+        2.1.0 - Node lookup and attach handling
+          * Added linstor_connector_host_property to map the host name
+            reported by Nova to a LINSTOR node in direct attach mode
+          * Find the LINSTOR nodes of the Cinder host and of connectors also
+            by the reported satellite host name and by IP address
     """
 
     VERSION = '2.1.0'
@@ -188,6 +203,7 @@ class LinstorDriver(driver.VolumeDriver):
         self._vendor_properties = {}
         self.target_driver = None  # type: targets.Target
         self.protocol = None  # type: str
+        self._local_node = None  # type: str
         self.c = ThreadSafeLinstorClient(self.configuration)
 
     @staticmethod
@@ -228,7 +244,6 @@ class LinstorDriver(driver.VolumeDriver):
 
         with self.c.get() as client:
             version_str = client.controller_version().rest_api_version
-            nodes = client.node_list_raise(filter_by_nodes=[self._hostname])
 
         rest_version = tuple(int(n) for n in version_str.split("."))
         if rest_version < (1, 4, 0):
@@ -236,10 +251,9 @@ class LinstorDriver(driver.VolumeDriver):
                 % str(rest_version)
             raise LinstorDriverException(msg)
 
-        if len(nodes.nodes) < 1:
-            msg = _('Cinder host %s is not a configured Linstor '
-                    'node') % self._hostname
-            raise LinstorDriverException(msg)
+        self._local_node = self._find_local_node()
+        LOG.info('Cinder host %s runs on LINSTOR node %s',
+                 self.host, self._local_node)
 
         if self._use_direct_connection():
             self.target_driver = LinstorDirectTarget(
@@ -270,16 +284,43 @@ class LinstorDriver(driver.VolumeDriver):
 
     @property
     def _hostname(self):
-        """Get the name of the local host"""
+        """The name of the LINSTOR node this service runs on"""
+        if self._local_node is None:
+            self._local_node = self._find_local_node()
+        return self._local_node
+
+    def _find_local_node(self):
+        """Find the LINSTOR node this service runs on
+
+        With ``linstor_hostname_file`` set, the file names the node.
+        Otherwise the node is looked up by the ``host`` option of this
+        service (without the backend suffix) and by the system host name,
+        each as node name and as host name reported by the satellite, and
+        finally by a network interface on the ``my_ip`` option. See
+        :func:`_find_node`.
+
+        :return: The name of the LINSTOR node
+        :rtype: str
+        :raises LinstorDriverException: if no node or more than one node
+         matches
+        """
+        with self.c.get() as client:
+            nodes = client.node_list_raise().nodes
+
         hostname_file = self.configuration.safe_get('linstor_hostname_file')
         if hostname_file:
             with open(hostname_file) as hostname:
-                return hostname.read().strip()
+                name = hostname.read().strip()
+            return _find_node(nodes, 'Cinder host %s' % name, [name])
 
+        names = []
         if self.host:
-            return volume_utils.extract_host(self.host, level='host')
-
-        return socket.gethostname()
+            names.append(volume_utils.extract_host(self.host, level='host'))
+        if socket.gethostname() not in names:
+            names.append(socket.gethostname())
+        return _find_node(
+            nodes, 'Cinder host %s' % names[0], names, CONF.my_ip,
+        )
 
     @property
     def _force_udev(self):
@@ -994,9 +1035,9 @@ class LinstorDirectTarget(targets.Target):
 
         :param ThreadSafeLinstorClient client: the client wrapper to use
         :param bool force_udev: Assume udev paths always exist.
-        :param str|None connector_host_property: LINSTOR node property used
-         to map connector host names to LINSTOR nodes, or None to use the
-         connector host name as the node name.
+        :param str|None connector_host_property: LINSTOR node property that
+         holds the connector host name, or None to not look up nodes by
+         property. See :meth:`_node_for_connector`.
         """
         super().__init__(*args, **kwargs)
         self.c = client
@@ -1008,45 +1049,23 @@ class LinstorDirectTarget(targets.Target):
         """Find the LINSTOR node a connector refers to
 
         Nova fills ``connector['host']`` with the value of its own ``host``
-        option. In most deployments this is the short host name, which is
-        also the name of the LINSTOR node. Some deployments use a different
-        identifier (for example a UUID) as the Nova host name. In that case
-        ``linstor_connector_host_property`` names a node property that
-        holds the Nova host name, and the node carrying that property is
-        used.
+        option, which is not necessarily the name of the LINSTOR node. The
+        node is looked up by ``linstor_connector_host_property`` if set, as
+        node name, as host name reported by the satellite, and finally by a
+        network interface on ``connector['ip']``. See :func:`_find_node`.
 
         :param dict connector: The connector reported by Nova
         :return: The name of the LINSTOR node to use
         :rtype: str
-        :raises LinstorDriverException: if more than one node matches
+        :raises LinstorDriverException: if no node or more than one node
+         matches
         """
         host = connector['host']
-        prop = self._connector_host_property
-        if not prop:
-            return host
-
-        nodes = self.c.get().node_list_raise()
-        matches = [
-            node.name for node in nodes.nodes
-            if node.props.get(prop, '').lower() == host.lower()
-        ]
-
-        if len(matches) > 1:
-            msg = _('Connector host %(host)s matches multiple LINSTOR '
-                    'nodes via property %(prop)s: %(nodes)s') % {
-                'host': host, 'prop': prop, 'nodes': ', '.join(matches),
-            }
-            LOG.error(msg)
-            raise LinstorDriverException(msg)
-
-        if matches:
-            LOG.debug('Connector host %s maps to LINSTOR node %s via '
-                      'property %s', host, matches[0], prop)
-            return matches[0]
-
-        LOG.debug('No LINSTOR node has property %s=%s, using connector '
-                  'host as node name', prop, host)
-        return host
+        nodes = self.c.get().node_list_raise().nodes
+        return _find_node(
+            nodes, 'Connector host %s' % host, [host],
+            connector.get('ip'), self._connector_host_property,
+        )
 
     def ensure_export(self, context, volume, volume_path):
         pass
@@ -1277,6 +1296,104 @@ def _kib_to_gib(kib):
         linstor.SizeCalc.UNIT_KiB,
         linstor.SizeCalc.UNIT_GiB,
     )
+
+
+def _find_node(nodes, what, names, address=None, prop=None):
+    """Find the LINSTOR node a host refers to
+
+    For each candidate name, in order, the lookups are: the node whose
+    property ``prop`` has that name as value (if ``prop`` is set), the node
+    with that name, and the node whose satellite reported that name as its
+    host name (``uname -n``). Finally, the node with a network interface on
+    ``address`` (if set). The first lookup that matches exactly one node
+    wins. Names are compared ignoring case, addresses as IP addresses.
+
+    :param list nodes: The nodes as listed by LINSTOR
+    :param str what: Describes the host in error messages
+    :param list[str] names: Candidate host names, in order of preference
+    :param str|None address: Candidate IP address
+    :param str|None prop: Node property holding host names
+    :return: The name of the matching node
+    :rtype: str
+    :raises LinstorDriverException: if a lookup matches more than one node,
+     or if no lookup matches at all
+    """
+    def by_property(key, value):
+        return [n.name for n in nodes if _same_name(n.props.get(key), value)]
+
+    lookups = []
+    for name in names:
+        if prop:
+            lookups.append((
+                'property %s=%s' % (prop, name), by_property(prop, name),
+            ))
+        lookups.append((
+            'name %s' % name,
+            [n.name for n in nodes if _same_name(n.name, name)],
+        ))
+        lookups.append((
+            'reported host name %s' % name,
+            by_property(NODE_UNAME_PROPERTY, name),
+        ))
+
+    parsed = _parse_address(address)
+    if parsed:
+        lookups.append((
+            'address %s' % parsed,
+            [n.name for n in nodes if parsed in _node_addresses(n)],
+        ))
+
+    for how, matches in lookups:
+        if len(matches) > 1:
+            msg = _('%(what)s matches multiple LINSTOR nodes by %(how)s: '
+                    '%(nodes)s') % {
+                'what': what, 'how': how, 'nodes': ', '.join(matches),
+            }
+            LOG.error(msg)
+            raise LinstorDriverException(msg)
+        if matches:
+            LOG.debug('%s maps to LINSTOR node %s by %s',
+                      what, matches[0], how)
+            return matches[0]
+
+    msg = _('%(what)s matches no LINSTOR node, tried: %(tried)s') % {
+        'what': what, 'tried': ', '.join(how for how, _matches in lookups),
+    }
+    LOG.error(msg)
+    raise LinstorDriverException(msg)
+
+
+def _same_name(name, other):
+    """Compare two host names ignoring case; a missing name never matches"""
+    return name is not None and name.lower() == other.lower()
+
+
+def _parse_address(address):
+    """Parse an IP address, returning None if it is missing or invalid"""
+    if not address:
+        return None
+    try:
+        return ipaddress.ip_address(address)
+    except ValueError:
+        LOG.debug('Ignoring connector address %r, not an IP address',
+                  address)
+        return None
+
+
+def _node_addresses(node):
+    """The IP addresses of all network interfaces of a LINSTOR node
+
+    :param linstor.responses.Node node: The node as listed by LINSTOR
+    :rtype: set[ipaddress.IPv4Address|ipaddress.IPv6Address]
+    """
+    addresses = set()
+    for netif in node.net_interfaces:
+        try:
+            addresses.add(ipaddress.ip_address(netif.address))
+        except ValueError:
+            LOG.debug('Ignoring address %r of node %s interface %s, not an '
+                      'IP address', netif.address, node.name, netif.name)
+    return addresses
 
 
 def _attached_on(volume):

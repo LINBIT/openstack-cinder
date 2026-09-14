@@ -1,0 +1,5 @@
+---
+features:
+  - |
+    The LINSTOR driver now also finds the LINSTOR nodes of the Cinder host and
+    of compute hosts by the host name their satellite reported or by IP address.
