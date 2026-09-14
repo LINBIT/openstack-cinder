@@ -1,0 +1,10 @@
+---
+upgrade:
+  - |
+    The LINSTOR driver now requires LINSTOR 1.35.0 (REST API 1.29.0) and
+    ``python-linstor`` 1.29.0 or later.
+features:
+  - |
+    The LINSTOR driver attaches with make-available and detaches with
+    unmake-available. LINSTOR manages the dual-primary window of live
+    migrations, and tiebreakers stay in place when detaching.

@@ -91,7 +91,7 @@ all = [
     "storpool.spopenstack>=2.2.1", # Apache-2.0
     "dfs-sdk>=1.2.25", # Apache-2.0
     "rbd-iscsi-client>=0.1.8", # Apache-2.0
-    "python-linstor>=1.7.0", # LGPLv3
+    "python-linstor>=1.29.0", # LGPLv3
     "psutil>=5.7.2", # BSD
 ]
 datacore = [
@@ -138,7 +138,7 @@ rbd_iscsi = [
     "rbd-iscsi-client>=0.1.8", # Apache-2.0
 ]
 linstor = [
-    "python-linstor>=1.7.0", # LGPLv3
+    "python-linstor>=1.29.0", # LGPLv3
 ]
 quobyte = [
     "psutil>=5.7.2", # BSD

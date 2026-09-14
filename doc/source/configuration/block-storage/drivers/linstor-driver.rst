@@ -7,8 +7,8 @@ The LINSTOR driver allows Cinder to use DRBD/LINSTOR instances.
 Requirements
 ~~~~~~~~~~~~
 
-- LINSTOR 1.4.0 or later
-- ``python-linstor`` package with ``MultiLinstor`` support
+- LINSTOR 1.35.0 or later (REST API 1.29.0)
+- ``python-linstor`` 1.29.0 or later
 
 External package installation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -18,7 +18,7 @@ LINSTOR Controller. Install the package from PYPI using the following command:
 
 .. code-block:: console
 
-   $ python -m pip install python-linstor
+   $ python -m pip install 'python-linstor>=1.29.0'
 
 Configuration
 ~~~~~~~~~~~~~
@@ -90,6 +90,26 @@ The driver refers to LINSTOR nodes by their LINSTOR node name in two places:
   .. code-block:: ini
 
      linstor_connector_host_property = Aux/openstack-host
+
+Live migration
+~~~~~~~~~~~~~~
+
+With direct attach, a live migration attaches the volume on the destination
+host while it is still in use on the source host, so both hosts have to be
+DRBD primary until the migration completes. The driver attaches with
+``make-available`` and its ``auto_manage_dual_primary`` option and detaches
+with ``unmake-available``. When the resource is in use on another host,
+LINSTOR sets ``allow-two-primaries`` (and protocol C if needed) between
+source and destination, and reverts it when the source detaches. Detaching
+keeps diskful replicas and tiebreakers in place. On a force detach the
+driver reverts the make-available on every attached host as far as
+possible.
+
+The driver attaches volumes on its own host the same way, for example to
+copy an image into a volume or to export it via iSCSI, but without the
+``auto_manage_dual_primary`` option: such an attach is never a live
+migration, and a volume in use on a compute node must not become primary on
+the Cinder host as well.
 
 Volume types and resource groups
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
